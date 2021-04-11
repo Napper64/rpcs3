@@ -317,7 +317,7 @@ namespace vk
 
 		void set_rsx_pitch(u16 pitch)
 		{
-			ensure(!is_locked());
+			// ensure(!is_locked());
 			rsx_pitch = pitch;
 		}
 
@@ -806,7 +806,7 @@ namespace vk
 			const rsx::image_section_attributes_t search_desc = { .gcm_format = gcm_format, .width = width, .height = height, .depth = section_depth, .mipmaps = mipmaps };
 			const bool allow_dirty = (context != rsx::texture_upload_context::framebuffer_storage);
 			cached_texture_section& region = *find_cached_texture(rsx_range, search_desc, true, true, allow_dirty);
-			ensure(!region.is_locked());
+			// ensure(!region.is_locked());
 
 			vk::viewable_image* image = nullptr;
 			if (region.exists())
