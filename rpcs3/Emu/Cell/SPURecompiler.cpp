@@ -7899,27 +7899,31 @@ public:
 
 		// Optimization: Emit only a floating multiply if the addend is zero
 		// This is odd since SPU code could just use the FM instruction, but it seems common enough
-		if (auto cv = llvm::dyn_cast<llvm::Constant>(c.value))
+		if (auto [ok, data] = get_const_vector(c.value, m_pos, 4000); ok)
 		{
-			auto [ok, data] = get_const_vector(cv, m_pos, 4000);
-
-			if (is_spu_float_zero(data))
+			if (is_spu_float_zero(data, -1))
 			{
-				r = eval(ca * cb);
+				r = eval(a * b);
+				return r;
+			}
+
+			if (!m_use_fma && is_spu_float_zero(data, +1))
+			{
+				r = eval(a * b + fsplat<f32[4]>(0.f));
 				return r;
 			}
 		}
 
 		if ([&]()
 			{
-			    if (auto [ok, data] = get_const_vector(ca.value, m_pos, 4000); ok)
+			    if (auto [ok, data] = get_const_vector(a.value, m_pos, 4000); ok)
 			    {
 				    if (!is_spu_float_zero(data, +1))
 				    {
 					    return false;
 				    }
 
-				    if (auto [ok0, data0] = get_const_vector(cb.value, m_pos, 4000); ok0)
+				    if (auto [ok0, data0] = get_const_vector(b.value, m_pos, 4000); ok0)
 				    {
 					    if (is_spu_float_zero(data0, +1))
 					    {
@@ -7928,14 +7932,14 @@ public:
 				    }
 			    }
 
-			    if (auto [ok, data] = get_const_vector(ca.value, m_pos, 4000); ok)
+			    if (auto [ok, data] = get_const_vector(a.value, m_pos, 4000); ok)
 			    {
 				    if (!is_spu_float_zero(data, -1))
 				    {
 					    return false;
 				    }
 
-				    if (auto [ok0, data0] = get_const_vector(cb.value, m_pos, 4000); ok0)
+				    if (auto [ok0, data0] = get_const_vector(b.value, m_pos, 4000); ok0)
 				    {
 					    if (is_spu_float_zero(data0, -1))
 					    {
@@ -7958,8 +7962,8 @@ public:
 		}
 
 		// Convert to doubles
-		const auto xa = m_ir->CreateFPExt(ca.value, get_type<f64[4]>());
-		const auto xb = m_ir->CreateFPExt(cb.value, get_type<f64[4]>());
+		const auto xa = m_ir->CreateFPExt(a.value, get_type<f64[4]>());
+		const auto xb = m_ir->CreateFPExt(b.value, get_type<f64[4]>());
 		const auto xc = m_ir->CreateFPExt(c.value, get_type<f64[4]>());
 		const auto xr = m_ir->CreateCall(get_intrinsic<f64[4]>(llvm::Intrinsic::fmuladd), {xa, xb, xc});
 		r.value = m_ir->CreateFPTrunc(xr, get_type<f32[4]>());
