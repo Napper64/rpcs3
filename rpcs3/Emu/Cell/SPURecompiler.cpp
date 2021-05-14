@@ -421,7 +421,7 @@ void spu_cache::initialize()
 	if (g_cfg.core.spu_decoder == spu_decoder_type::asmjit || g_cfg.core.spu_decoder == spu_decoder_type::llvm)
 	{
 		// Initialize progress dialog (wait for previous progress done)
-		g_progr_ptotal.wait<atomic_wait::op_ne>(0);
+		thread_ctrl::wait_on<atomic_wait::op_ne>(g_progr_ptotal, 0);
 
 		g_progr_ptotal += ::size32(func_list);
 		progr.emplace("Building SPU cache...");
@@ -6276,19 +6276,19 @@ public:
 	}
 
 	template <typename TA, typename TB>
-	static auto mpyh(TA&& a, TB&& b)
+	auto mpyh(TA&& a, TB&& b)
 	{
-		return (std::forward<TA>(a) >> 16) * (std::forward<TB>(b) << 16);
+		return bitcast<u32[4]>(bitcast<u16[8]>((std::forward<TA>(a) >> 16)) * bitcast<u16[8]>(std::forward<TB>(b))) << 16;
 	}
 
 	template <typename TA, typename TB>
-	static auto mpyu(TA&& a, TB&& b)
+	auto mpyu(TA&& a, TB&& b)
 	{
 		return (std::forward<TA>(a) << 16 >> 16) * (std::forward<TB>(b) << 16 >> 16);
 	}
 
 	template <typename TA, typename TB>
-	static auto fm(TA&& a, TB&& b)
+	auto fm(TA&& a, TB&& b)
 	{
 		return (std::forward<TA>(a)) * (std::forward<TB>(b));
 	}

@@ -350,9 +350,9 @@ void kernel_explorer::Update()
 		case SYS_INTR_TAG_OBJECT:
 		{
 			auto& tag = static_cast<lv2_int_tag&>(obj);
-			auto handler = tag.handler.lock();
+			const auto handler = tag.handler.get();
 
-			if (handler && handler.get() == idm::check_unlocked<lv2_obj, lv2_int_serv>(handler->id))
+			if (lv2_obj::check(handler))
 			{
 				add_leaf(node, qstr(fmt::format("Intr Tag 0x%08x, Handler: 0x%08x", id, handler->id)));
 				break;
@@ -379,7 +379,7 @@ void kernel_explorer::Update()
 			auto& ep = static_cast<lv2_event_port&>(obj);
 			const auto type = ep.type == SYS_EVENT_PORT_LOCAL ? "LOCAL"sv : "IPC"sv;
 
-			if (const auto queue = ep.queue.get(); queue && queue->exists)
+			if (const auto queue = ep.queue.get(); lv2_obj::check(queue))
 			{
 				if (queue == idm::check_unlocked<lv2_obj, lv2_event_queue>(queue->id))
 				{
@@ -640,14 +640,13 @@ void kernel_explorer::Update()
 	{
 		// Currently a single context is supported at a time
 		const auto rsx = rsx::get_current_renderer();
-		const auto context_info = g_fxo->try_get<lv2_rsx_config>();
 
-		if (!rsx || !context_info)
+		if (!rsx)
 		{
 			break;
 		}
 
-		const auto base = context_info->context_base;
+		const auto base = rsx->dma_address;
 
 		if (!base)
 		{
@@ -656,7 +655,7 @@ void kernel_explorer::Update()
 
 		const QString branch_name = "RSX Context 0x55555555";
 		QTreeWidgetItem* rsx_tree = add_solid_node(m_tree, rsx_context_node, branch_name,
-			branch_name + qstr(fmt::format(u8", Local Size: %u MB, Base Addr: 0x%x, Device Addr: 0x%x, Handlers: 0x%x", context_info->memory_size >> 20, base, context_info->device_addr, +vm::_ref<RsxDriverInfo>(context_info->driver_info).handlers)));
+			branch_name + qstr(fmt::format(u8", Local Size: %u MB, Base Addr: 0x%x, Device Addr: 0x%x, Handlers: 0x%x", rsx->local_mem_size >> 20, base, rsx->device_addr, +vm::_ref<RsxDriverInfo>(rsx->driver_info).handlers)));
 
 		QTreeWidgetItem* io_tree = add_volatile_node(m_tree, rsx_tree, tr("IO-EA Table"));
 		QTreeWidgetItem* zc_tree = add_volatile_node(m_tree, rsx_tree, tr("Zcull Bindings"));
@@ -666,7 +665,7 @@ void kernel_explorer::Update()
 		decltype(rsx->display_buffers) dbs;
 		decltype(rsx->zculls) zcs;
 		{
-			std::lock_guard lock(context_info->mutex);
+			std::lock_guard lock(rsx->sys_rsx_mtx);
 			std::memcpy(&table, &rsx->iomap_table, sizeof(table));
 			std::memcpy(&dbs, rsx->display_buffers, sizeof(dbs));
 			std::memcpy(&zcs, &rsx->zculls, sizeof(zcs));

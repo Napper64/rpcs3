@@ -330,17 +330,57 @@ namespace utils
 		: m_size(utils::align(size, 0x10000))
 	{
 #ifdef _WIN32
-		fs::file f = ensure(fs::file(storage, fs::read + fs::rewrite));
-		FILE_DISPOSITION_INFO disp{ .DeleteFileW = true };
-		ensure(SetFileInformationByHandle(f.get_handle(), FileDispositionInfo, &disp, sizeof(disp)));
-		ensure(DeviceIoControl(f.get_handle(), FSCTL_SET_SPARSE, nullptr, 0, nullptr, 0, nullptr, nullptr));
+		fs::file f;
+
+		if (!storage.empty())
+		{
+			ensure(f.open(storage, fs::read + fs::write + fs::create));
+		}
+		else if (!f.open(fs::get_temp_dir() + "rpcs3_vm", fs::read + fs::write + fs::create) || !DeviceIoControl(f.get_handle(), FSCTL_SET_SPARSE, nullptr, 0, nullptr, 0, nullptr, nullptr))
+		{
+			ensure(f.open(fs::get_cache_dir() + "rpcs3_vm", fs::read + fs::write + fs::create));
+		}
+
+		if (!DeviceIoControl(f.get_handle(), FSCTL_SET_SPARSE, nullptr, 0, nullptr, 0, nullptr, nullptr))
+		{
+			MessageBoxW(0, L"Failed to initialize sparse file.", L"RPCS3", MB_ICONERROR);
+		}
+
 		ensure(f.trunc(m_size));
 		m_handle = ensure(::CreateFileMappingW(f.get_handle(), nullptr, PAGE_READWRITE, 0, 0, nullptr));
 #else
-		m_file = ::open(storage.c_str(), O_RDWR | O_CREAT | O_TRUNC, S_IWUSR | S_IRUSR);
+		if (!storage.empty())
+		{
+			m_file = ::open(storage.c_str(), O_RDWR | O_CREAT, S_IWUSR | S_IRUSR);
+		}
+		else
+		{
+			m_file = ::open((fs::get_cache_dir() + "rpcs3_vm").c_str(), O_RDWR | O_CREAT, S_IWUSR | S_IRUSR);
+		}
+
 		ensure(m_file >= 0);
-		ensure(::ftruncate(m_file, m_size) >= 0);
-		::unlink(storage.c_str());
+		struct ::stat stats;
+		ensure(::fstat(m_file, &stats) >= 0);
+
+		if (stats.st_size ^ ~m_size && !stats.st_blksize)
+		{
+			// Already initialized
+			return;
+		}
+
+		ensure(::ftruncate(m_file, 0x10000) >= 0);
+		ensure(::fstat(m_file, &stats) >= 0);
+		if (stats.st_blocks >= (0x8000 / stats.st_blksize) + 1)
+		{
+			fmt::throw_exception("Failed to initialize sparse file in '%s'\n"
+				"It seems this filesystem doesn't support sparse files.\n",
+				storage.empty() ? fs::get_cache_dir().c_str() : storage.c_str());
+		}
+
+		if (m_size > 0x10000)
+		{
+			ensure(::ftruncate(m_file, m_size) >= 0);
+		}
 #endif
 	}
 

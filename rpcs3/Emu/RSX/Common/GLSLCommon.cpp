@@ -227,7 +227,7 @@ namespace glsl
 		if (!glsl4_compliant)
 		{
 			OS <<
-			"void mov(inout vec4 vector, const in int index, const in float scalar)\n"
+			"void mov(inout uvec4 vector, const in int index, const in uint scalar)\n"
 			"{\n"
 			"	switch(index)\n"
 			"	{\n"

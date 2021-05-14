@@ -34,9 +34,9 @@ void lv2_timer_context::operator()()
 					continue;
 				}
 
-				if (const auto queue = port.lock())
+				if (port)
 				{
-					queue->send(source, data1, data2, next);
+					port->send(source, data1, data2, next);
 				}
 
 				if (period)
@@ -83,7 +83,7 @@ error_code sys_timer_destroy(ppu_thread& ppu, u32 timer_id)
 
 	const auto timer = idm::withdraw<lv2_obj, lv2_timer>(timer_id, [&](lv2_timer& timer) -> CellError
 	{
-		if (reader_lock lock(timer.mutex); lv2_event_queue::check(timer.port))
+		if (reader_lock lock(timer.mutex); lv2_obj::check(timer.port))
 		{
 			return CELL_EISCONN;
 		}
@@ -151,14 +151,14 @@ error_code _sys_timer_start(ppu_thread& ppu, u32 timer_id, u64 base_time, u64 pe
 	{
 		std::unique_lock lock(timer.mutex);
 
+		if (!lv2_obj::check(timer.port))
+		{
+			return CELL_ENOTCONN;
+		}
+
 		if (timer.state != SYS_TIMER_STATE_STOP)
 		{
 			return CELL_EBUSY;
-		}
-
-		if (timer.port.expired())
-		{
-			return CELL_ENOTCONN;
 		}
 
 		// sys_timer_start_periodic() will use current time (TODO: is it correct?)
@@ -222,7 +222,7 @@ error_code sys_timer_connect_event_queue(ppu_thread& ppu, u32 timer_id, u32 queu
 
 		std::lock_guard lock(timer.mutex);
 
-		if (lv2_event_queue::check(timer.port))
+		if (lv2_obj::check(timer.port))
 		{
 			return CELL_EISCONN;
 		}
@@ -260,7 +260,7 @@ error_code sys_timer_disconnect_event_queue(ppu_thread& ppu, u32 timer_id)
 
 		timer.state = SYS_TIMER_STATE_STOP;
 
-		if (!lv2_event_queue::check(timer.port))
+		if (!lv2_obj::check(timer.port))
 		{
 			return CELL_ENOTCONN;
 		}

@@ -1428,11 +1428,11 @@ error_code sys_spu_thread_group_connect_event(ppu_thread& ppu, u32 id, u32 eq, u
 		return CELL_EINVAL;
 	}
 
-	const auto queue = idm::get<lv2_obj, lv2_event_queue>(eq);
+	auto queue = idm::get<lv2_obj, lv2_event_queue>(eq);
 
 	std::lock_guard lock(group->mutex);
 
-	if (lv2_event_queue::check(*ep))
+	if (lv2_obj::check(*ep))
 	{
 		return CELL_EBUSY;
 	}
@@ -1443,7 +1443,7 @@ error_code sys_spu_thread_group_connect_event(ppu_thread& ppu, u32 id, u32 eq, u
 		return CELL_ESRCH;
 	}
 
-	*ep = queue;
+	*ep = std::move(queue);
 	return CELL_OK;
 }
 
@@ -1474,7 +1474,7 @@ error_code sys_spu_thread_group_disconnect_event(ppu_thread& ppu, u32 id, u32 et
 
 	std::lock_guard lock(group->mutex);
 
-	if (!lv2_event_queue::check(*ep))
+	if (!lv2_obj::check(*ep))
 	{
 		return CELL_EINVAL;
 	}
@@ -1490,7 +1490,7 @@ error_code sys_spu_thread_connect_event(ppu_thread& ppu, u32 id, u32 eq, u32 et,
 	sys_spu.warning("sys_spu_thread_connect_event(id=0x%x, eq=0x%x, et=%d, spup=%d)", id, eq, et, spup);
 
 	const auto [thread, group] = lv2_spu_group::get_thread(id);
-	const auto queue = idm::get<lv2_obj, lv2_event_queue>(eq);
+	auto queue = idm::get<lv2_obj, lv2_event_queue>(eq);
 
 	if (!queue || !thread) [[unlikely]]
 	{
@@ -1507,12 +1507,12 @@ error_code sys_spu_thread_connect_event(ppu_thread& ppu, u32 id, u32 eq, u32 et,
 
 	auto& port = thread->spup[spup];
 
-	if (lv2_event_queue::check(port))
+	if (lv2_obj::check(port))
 	{
 		return CELL_EISCONN;
 	}
 
-	port = queue;
+	port = std::move(queue);
 
 	return CELL_OK;
 }
@@ -1540,7 +1540,7 @@ error_code sys_spu_thread_disconnect_event(ppu_thread& ppu, u32 id, u32 et, u8 s
 
 	auto& port = thread->spup[spup];
 
-	if (!lv2_event_queue::check(port))
+	if (!lv2_obj::check(port))
 	{
 		return CELL_ENOTCONN;
 	}
@@ -1557,7 +1557,7 @@ error_code sys_spu_thread_bind_queue(ppu_thread& ppu, u32 id, u32 spuq, u32 spuq
 	sys_spu.warning("sys_spu_thread_bind_queue(id=0x%x, spuq=0x%x, spuq_num=0x%x)", id, spuq, spuq_num);
 
 	const auto [thread, group] = lv2_spu_group::get_thread(id);
-	const auto queue = idm::get<lv2_obj, lv2_event_queue>(spuq);
+	auto queue = idm::get<lv2_obj, lv2_event_queue>(spuq);
 
 	if (!queue || !thread) [[unlikely]]
 	{
@@ -1576,8 +1576,7 @@ error_code sys_spu_thread_bind_queue(ppu_thread& ppu, u32 id, u32 spuq, u32 spuq
 	for (auto& v : thread->spuq)
 	{
 		// Check if the entry is assigned at all
-		if (const decltype(v.second) test{};
-			!v.second.owner_before(test) && !test.owner_before(v.second))
+		if (!v.second)
 		{
 			if (!q)
 			{
@@ -1587,8 +1586,7 @@ error_code sys_spu_thread_bind_queue(ppu_thread& ppu, u32 id, u32 spuq, u32 spuq
 			continue;
 		}
 
-		if (v.first == spuq_num ||
-			(!v.second.owner_before(queue) && !queue.owner_before(v.second)))
+		if (v.first == spuq_num || v.second == queue)
 		{
 			return CELL_EBUSY;
 		}
@@ -1600,7 +1598,7 @@ error_code sys_spu_thread_bind_queue(ppu_thread& ppu, u32 id, u32 spuq, u32 spuq
 	}
 
 	q->first = spuq_num;
-	q->second = queue;
+	q->second = std::move(queue);
 	return CELL_OK;
 }
 
@@ -1626,8 +1624,7 @@ error_code sys_spu_thread_unbind_queue(ppu_thread& ppu, u32 id, u32 spuq_num)
 			continue;
 		}
 
-		if (const decltype(v.second) test{};
-			!v.second.owner_before(test) && !test.owner_before(v.second))
+		if (!v.second)
 		{
 			continue;
 		}
@@ -1686,7 +1683,7 @@ error_code sys_spu_thread_group_connect_event_all_threads(ppu_thread& ppu, u32 i
 		{
 			if (t)
 			{
-				if (lv2_event_queue::check(t->spup[port]))
+				if (lv2_obj::check(t->spup[port]))
 				{
 					found = false;
 					break;
@@ -1941,17 +1938,17 @@ error_code raw_spu_destroy(ppu_thread& ppu, u32 id)
 	// Clear interrupt handlers
 	for (auto& intr : thread->int_ctrl)
 	{
-		if (auto tag = intr.tag.lock())
+		if (auto& tag = intr.tag; lv2_obj::check(tag))
 		{
-			if (auto handler = tag->handler.lock())
+			if (auto& handler = tag->handler; lv2_obj::check(handler))
 			{
 				// SLEEP
 				lv2_obj::sleep(ppu);
 				handler->join();
-				to_remove.emplace_back(std::move(handler), +handler->id);
+				to_remove.emplace_back(handler, handler->id);
 			}
 
-			to_remove.emplace_back(std::move(tag), +tag->id);
+			to_remove.emplace_back(tag, tag->id);
 		}
 	}
 
@@ -2026,7 +2023,7 @@ error_code raw_spu_create_interrupt_tag(u32 id, u32 class_id, u32 /*hwthread*/, 
 
 		auto& int_ctrl = thread->int_ctrl[class_id];
 
-		if (!int_ctrl.tag.expired())
+		if (lv2_obj::check(int_ctrl.tag))
 		{
 			error = CELL_EAGAIN;
 			return result;
