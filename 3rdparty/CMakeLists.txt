@@ -26,14 +26,25 @@ target_include_directories(3rdparty_zlib INTERFACE ${ZLIB_INCLUDE_DIR})
 add_subdirectory(7z EXCLUDE_FROM_ALL)
 
 add_library(3rdparty_flatbuffers INTERFACE)
-target_include_directories(3rdparty_flatbuffers INTERFACE flatbuffers/include)
+if (USE_SYSTEM_FLATBUFFERS)
+	pkg_check_modules(FLATBUFFERS REQUIRED IMPORTED_TARGET flatbuffers>=2.0.0)
+	target_link_libraries(3rdparty_flatbuffers INTERFACE PkgConfig::FLATBUFFERS)
+else()
+	target_include_directories(3rdparty_flatbuffers INTERFACE flatbuffers/include)
+endif()
 
 # libPNG
 add_subdirectory(libpng EXCLUDE_FROM_ALL)
 
 
 # pugixml
-add_subdirectory(pugixml EXCLUDE_FROM_ALL)
+if (USE_SYSTEM_PUGIXML)
+	pkg_check_modules(PUGIXML REQUIRED IMPORTED_TARGET pugixml>=1.11)
+	add_library(pugixml INTERFACE)
+	target_link_libraries(pugixml INTERFACE PkgConfig::PUGIXML)
+else()
+	add_subdirectory(pugixml EXCLUDE_FROM_ALL)
+endif()
 
 
 # libusb
@@ -111,11 +122,17 @@ set(CMAKE_INSTALL_PREFIX ${CMAKE_INSTALL_PREFIX_OLD})
 
 
 # xxHash
-set(XXHASH_BUNDLED_MODE ON)
-set(XXHASH_BUILD_XXHSUM OFF)
-set(BUILD_SHARED_LIBS OFF CACHE BOOL "Make xxHash build static libs")
-add_subdirectory(xxHash/cmake_unofficial EXCLUDE_FROM_ALL)
-target_include_directories(xxhash INTERFACE xxHash)
+if (USE_SYSTEM_XXHASH)
+	pkg_check_modules(XXHASH REQUIRED IMPORTED_TARGET libxxhash)
+	add_library(xxhash INTERFACE)
+	target_link_libraries(xxhash INTERFACE PkgConfig::XXHASH)
+else()
+	set(XXHASH_BUNDLED_MODE ON)
+	set(XXHASH_BUILD_XXHSUM OFF)
+	set(BUILD_SHARED_LIBS OFF CACHE BOOL "Make xxHash build static libs")
+	add_subdirectory(xxHash/cmake_unofficial EXCLUDE_FROM_ALL)
+	target_include_directories(xxhash INTERFACE xxHash)
+endif()
 
 
 # cereal
@@ -331,10 +348,9 @@ include(llvm.cmake)
 # WOLFSSL
 if(USE_SYSTEM_WOLFSSL)
 	message("-- RPCS3: using shared wolfssl")
-	find_package(WolfSSL REQUIRED)
+	pkg_check_modules(WolfSSL REQUIRED IMPORTED_TARGET wolfssl>=4.7.0)
 	add_library(wolfssl INTERFACE)
-	target_link_libraries(wolfssl INTERFACE WolfSSL_LIBRARIES)
-	target_include_directories(wolfssl INTERFACE WolfSSL_INCLUDE_DIRS)
+	target_link_libraries(wolfssl INTERFACE PkgConfig::WolfSSL)
 else()
 	SET(BUILD_TESTS NO CACHE BOOL "Build test applications")
 	add_compile_definitions(HAVE_FFDHE_2048 TFM_TIMING_RESISTANT ECC_TIMING_RESISTANT
