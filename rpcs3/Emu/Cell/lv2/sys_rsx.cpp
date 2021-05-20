@@ -404,10 +404,8 @@ error_code sys_rsx_context_attribute(u32 context_id, u32 package_id, u64 a3, u64
 	}
 
 	// Flip/queue/reset flip/flip event/user command/vblank as trace to help with log spam
-	if (package_id == 0x102 || package_id == 0x103 || package_id == 0x10a || package_id == 0xFEC || package_id == 0xFED || package_id == 0xFEF)
-		sys_rsx.trace("sys_rsx_context_attribute(context_id=0x%x, package_id=0x%x, a3=0x%llx, a4=0x%llx, a5=0x%llx, a6=0x%llx)", context_id, package_id, a3, a4, a5, a6);
-	else
-		sys_rsx.warning("sys_rsx_context_attribute(context_id=0x%x, package_id=0x%x, a3=0x%llx, a4=0x%llx, a5=0x%llx, a6=0x%llx)", context_id, package_id, a3, a4, a5, a6);
+	const bool trace_log = (package_id == 0x102 || package_id == 0x103 || package_id == 0x10a || package_id == 0xFEC || package_id == 0xFED || package_id == 0xFEF);
+	(trace_log ? sys_rsx.trace : sys_rsx.warning)("sys_rsx_context_attribute(context_id=0x%x, package_id=0x%x, a3=0x%llx, a4=0x%llx, a5=0x%llx, a6=0x%llx)", context_id, package_id, a3, a4, a5, a6);
 
 	// todo: these event ports probly 'shouldnt' be here as i think its supposed to be interrupts that are sent from rsx somewhere in lv1
 
@@ -415,8 +413,7 @@ error_code sys_rsx_context_attribute(u32 context_id, u32 package_id, u64 a3, u64
 
 	if (!render->dma_address || context_id != 0x55555555)
 	{
-		sys_rsx.error("sys_rsx_context_attribute(): invalid context failure (context_id=0x%x)", context_id);
-		return CELL_OK; // Actually returns CELL_OK, cellGCmSys seem to be relying on this as well
+		return CELL_EINVAL;
 	}
 
 	auto &driverInfo = vm::_ref<RsxDriverInfo>(render->driver_info);
