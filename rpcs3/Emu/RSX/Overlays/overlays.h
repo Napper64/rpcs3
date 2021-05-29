@@ -19,8 +19,8 @@ namespace rsx
 		// Non-interactable UI element
 		struct overlay
 		{
-			u32 uid = UINT32_MAX;
-			u32 type_index = UINT32_MAX;
+			u32 uid = umax;
+			u32 type_index = umax;
 
 			u16 virtual_width = 1280;
 			u16 virtual_height = 720;
@@ -72,6 +72,8 @@ namespace rsx
 			Timer input_timer;
 			std::set<u8> auto_repeat_buttons = { pad_button::dpad_up, pad_button::dpad_down, pad_button::dpad_left, pad_button::dpad_right };
 			atomic_t<bool> exit = false;
+			atomic_t<bool> m_interactive = false;
+			atomic_t<bool> m_stop_pad_interception = false;
 			atomic_t<u64> thread_bits = 0;
 
 			static thread_local u64 g_thread_bit;

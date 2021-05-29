@@ -60,7 +60,7 @@ windows_task:
 
 linux_task:
   container:
-    image: rpcs3/rpcs3-ci-bionic:1.0
+    image: rpcs3/rpcs3-ci-bionic:1.1
     cpu: 4
     memory: 16G
   env:
@@ -102,6 +102,11 @@ freebsd_task:
     - name: FreeBSD 12.2
       freebsd_instance:
         image_family: freebsd-12-2
+        cpu: 8
+        memory: 8G
+    - name: FreeBSD 13
+      freebsd_instance:
+        image_family: freebsd-13-0
         cpu: 8
         memory: 8G
   env:

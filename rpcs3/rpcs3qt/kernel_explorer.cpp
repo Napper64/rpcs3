@@ -337,11 +337,11 @@ void kernel_explorer::Update()
 
 			if (mem.pshared)
 			{
-				add_leaf(node, qstr(fmt::format("Shared Mem 0x%08x: Size: 0x%x (%0.2f MB), Granularity: %s, Mappings: %u, Key: %#llx", id, mem.size, size_mb, mem.align == 0x10000u ? "64K" : "1MB", +mem.counter, mem.key)));
+				add_leaf(node, qstr(fmt::format("Shared Mem 0x%08x: Size: 0x%x (%0.2f MB), Chunk: %s, Mappings: %u, Mem Container: %s, Key: %#llx", id, mem.size, size_mb, mem.align == 0x10000u ? "64K" : "1MB", +mem.counter, mem.ct->id, mem.key)));
 				break;
 			}
 
-			add_leaf(node, qstr(fmt::format("Shared Mem 0x%08x: Size: 0x%x (%0.2f MB), Granularity: %s, Mappings: %u", id, mem.size, size_mb, mem.align == 0x10000u ? "64K" : "1MB", +mem.counter)));
+			add_leaf(node, qstr(fmt::format("Shared Mem 0x%08x: Size: 0x%x (%0.2f MB), Chunk: %s, Mem Container: %s, Mappings: %u", id, mem.size, size_mb, mem.align == 0x10000u ? "64K" : "1MB", mem.ct->id, +mem.counter)));
 			break;
 		}
 		case SYS_MUTEX_OBJECT:
@@ -535,8 +535,8 @@ void kernel_explorer::Update()
 	idm::select<sys_vm_t>([&](u32 /*id*/, sys_vm_t& vmo)
 	{
 		const u32 psize = vmo.psize;
-		add_leaf(find_node(root, additional_nodes::virtual_memory), qstr(fmt::format("Virtual Mem 0x%08x: Virtual Size: 0x%x (%0.2f MB), Physical Size: 0x%x (%0.2f MB)", vmo.addr
-			, vmo.size, vmo.size * 1. / (1024 * 1024), psize, psize * 1. / (1024 * 1024))));
+		add_leaf(find_node(root, additional_nodes::virtual_memory), qstr(fmt::format("Virtual Mem 0x%08x: Virtual Size: 0x%x (%0.2f MB), Physical Size: 0x%x (%0.2f MB), Mem Container: %s", vmo.addr
+			, vmo.size, vmo.size * 1. / (1024 * 1024), psize, psize * 1. / (1024 * 1024))), vmo.ct->id);
 	});
 
 	idm::select<lv2_socket>([&](u32 id, lv2_socket& sock)
@@ -555,11 +555,8 @@ void kernel_explorer::Update()
 		const auto func = ppu.last_function;
 		const ppu_thread_status status = lv2_obj::ppu_state(&ppu, false);
 
-		if (status != PPU_THREAD_STATUS_DELETED)
-		{
-			add_leaf(find_node(root, additional_nodes::ppu_threads), qstr(fmt::format(u8"PPU 0x%07x: “%s”, PRIO: %d, Joiner: %s, Status: %s, State: %s, %s func: “%s”", id, *ppu.ppu_tname.load(), +ppu.prio, ppu.joiner.load(), status, ppu.state.load()
-				, ppu.current_function ? "In" : "Last", func ? func : "")));
-		}
+		add_leaf(find_node(root, additional_nodes::ppu_threads), qstr(fmt::format(u8"PPU 0x%07x: “%s”, PRIO: %d, Joiner: %s, Status: %s, State: %s, %s func: “%s”", id, *ppu.ppu_tname.load(), +ppu.prio, ppu.joiner.load(), status, ppu.state.load()
+			, ppu.current_function ? "In" : "Last", func ? func : "")));
 	});
 
 	idm::select<named_thread<spu_thread>>([&](u32 /*id*/, spu_thread& spu)
@@ -574,7 +571,7 @@ void kernel_explorer::Update()
 			const auto first_spu = spu.group->threads[0].get();
 
 			// Always show information of the first thread in group
-			// Or if information differs from that thread 
+			// Or if information differs from that thread
 			if (&spu == first_spu || std::any_of(std::begin(spu.spup), std::end(spu.spup), [&](const auto& port)
 			{
 				// Flag to avoid reporting information if no SPU ports are connected
@@ -597,7 +594,7 @@ void kernel_explorer::Update()
 				// Avoid duplication of information between threads which is common
 				add_leaf(spu_thread_tree, qstr(fmt::format("SPU Ports: As SPU 0x%07x", first_spu->lv2_id)));
 			}
-			
+
 			for (const auto& [key, queue] : spu.spuq)
 			{
 				if (lv2_obj::check(queue))
@@ -635,7 +632,7 @@ void kernel_explorer::Update()
 
 					if (!pspurs)
 					{
-						if (arg < UINT32_MAX && arg % 0x80 == 0 && vm::check_addr(arg, vm::page_readable, pspurs.size()))
+						if (arg < u32{umax} && arg % 0x80 == 0 && vm::check_addr(arg, vm::page_readable, pspurs.size()))
 						{
 							pspurs.set(static_cast<u32>(arg));
 						}

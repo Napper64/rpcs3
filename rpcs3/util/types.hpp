@@ -8,17 +8,12 @@
 #include <chrono>
 #include <array>
 #include <tuple>
+#include <compare>
+#include <bit>
 
 using std::chrono::steady_clock;
 
 using namespace std::literals;
-
-#ifdef _MSC_VER
-#if !defined(__cpp_lib_bitops) && _MSC_VER < 1928
-#define __cpp_lib_bitops
-#endif
-#endif
-#include <bit>
 
 #ifndef __has_builtin
 	#define __has_builtin(x) 0
@@ -56,19 +51,10 @@ using namespace std::literals;
 #if __cpp_lib_bit_cast < 201806L
 namespace std
 {
-	template <class To, class From, typename = std::enable_if_t<sizeof(To) == sizeof(From)>>
-	constexpr To bit_cast(const From& from) noexcept
+	template <typename To, typename From>
+	[[nodiscard]] constexpr To bit_cast(const From& from) noexcept
 	{
-		static_assert(sizeof(To) == sizeof(From), "std::bit_cast<>: incompatible type size");
-
-		if constexpr ((std::is_same_v<std::remove_const_t<To>, std::remove_const_t<From>> && std::is_constructible_v<To, From>) || (std::is_integral_v<From> && std::is_integral_v<To>))
-		{
-			return static_cast<To>(from);
-		}
-
-		To result{};
-		__builtin_memcpy(&result, &from, sizeof(From));
-		return result;
+		return __builtin_bit_cast(To, from);
 	}
 }
 #endif
@@ -519,32 +505,169 @@ struct get_int_impl<16>
 	using stype = s128;
 };
 
-// Return magic value for any unsigned type
-constexpr struct umax_impl_t
-{
-	template <typename T> requires (std::is_unsigned_v<std::common_type_t<T>>) || (std::is_same_v<std::common_type_t<T>, u128>)
-	constexpr bool operator==(const T& rhs) const
-	{
-		return rhs == static_cast<std::common_type_t<T>>(-1);
-	}
-
-	template <typename T> requires (std::is_unsigned_v<std::common_type_t<T>>) || (std::is_same_v<std::common_type_t<T>, u128>)
-	constexpr bool operator<(const T& rhs) const
-	{
-		return rhs < static_cast<std::common_type_t<T>>(-1);
-	}
-
-	template <typename T> requires (std::is_unsigned_v<std::common_type_t<T>>) || (std::is_same_v<std::common_type_t<T>, u128>)
-	constexpr operator T() const
-	{
-		return static_cast<std::common_type_t<T>>(-1);
-	}
-} umax;
-
 enum class f16 : u16{};
 
 using f32 = float;
 using f64 = double;
+
+template <typename T>
+concept UnsignedInt = std::is_unsigned_v<std::common_type_t<T>> || std::is_same_v<std::common_type_t<T>, u128>;
+
+template <typename T>
+concept SignedInt = (std::is_signed_v<std::common_type_t<T>> && std::is_integral_v<std::common_type_t<T>>) || std::is_same_v<std::common_type_t<T>, s128>;
+
+template <typename T>
+concept FPInt = std::is_floating_point_v<std::common_type_t<T>> || std::is_same_v<std::common_type_t<T>, f16>;
+
+template <typename T>
+constexpr T min_v;
+
+template <UnsignedInt T>
+constexpr std::common_type_t<T> min_v<T> = 0;
+
+template <SignedInt T>
+constexpr std::common_type_t<T> min_v<T> = static_cast<std::common_type_t<T>>(-1) << (sizeof(std::common_type_t<T>) * 8 - 1);
+
+template <>
+constexpr inline f16 min_v<f16>{0xfbffu};
+
+template <>
+constexpr inline f32 min_v<f32> = std::bit_cast<f32, u32>(0xff'7fffffu);
+
+template <>
+constexpr inline f64 min_v<f64> = std::bit_cast<f64, u64>(0xffe'7ffff'ffffffffu);
+
+template <FPInt T>
+constexpr std::common_type_t<T> min_v<T> = min_v<std::common_type_t<T>>;
+
+template <typename T>
+constexpr T max_v;
+
+template <UnsignedInt T>
+constexpr std::common_type_t<T> max_v<T> = -1;
+
+template <SignedInt T>
+constexpr std::common_type_t<T> max_v<T> = static_cast<std::common_type_t<T>>(~min_v<T>);
+
+template <>
+constexpr inline f16 max_v<f16>{0x7bffu};
+
+template <>
+constexpr inline f32 max_v<f32> = std::bit_cast<f32, u32>(0x7f'7fffffu);
+
+template <>
+constexpr inline f64 max_v<f64> = std::bit_cast<f64, u64>(0x7fe'fffff'ffffffffu);
+
+template <FPInt T>
+constexpr std::common_type_t<T> max_v<T> = max_v<std::common_type_t<T>>;
+
+// Return magic value for any unsigned type
+constexpr struct umax_impl_t
+{
+	template <UnsignedInt T>
+	constexpr bool operator==(const T& rhs) const
+	{
+		return rhs == max_v<T>;
+	}
+
+	template <UnsignedInt T>
+	constexpr std::strong_ordering operator<=>(const T& rhs) const
+	{
+		return rhs == max_v<T> ? std::strong_ordering::equal : std::strong_ordering::greater;
+	}
+
+	template <UnsignedInt T>
+	constexpr operator T() const
+	{
+		return max_v<T>;
+	}
+} umax;
+
+constexpr struct smin_impl_t
+{
+	template <SignedInt T>
+	constexpr bool operator==(const T& rhs) const
+	{
+		return rhs == min_v<T>;
+	}
+
+	template <SignedInt T>
+	constexpr std::strong_ordering operator<=>(const T& rhs) const
+	{
+		return rhs == min_v<T> ? std::strong_ordering::equal : std::strong_ordering::less;
+	}
+
+	template <SignedInt T>
+	constexpr operator T() const
+	{
+		return min_v<T>;
+	}
+} smin;
+
+constexpr struct smax_impl_t
+{
+	template <SignedInt T>
+	constexpr bool operator==(const T& rhs) const
+	{
+		return rhs == max_v<T>;
+	}
+
+	template <SignedInt T>
+	constexpr std::strong_ordering operator<=>(const T& rhs) const
+	{
+		return rhs == max_v<T> ? std::strong_ordering::equal : std::strong_ordering::greater;
+	}
+
+	template <SignedInt T>
+	constexpr operator T() const
+	{
+		return max_v<T>;
+	}
+} smax;
+
+// Compare signed or unsigned type with its max value
+constexpr struct amax_impl_t
+{
+	template <typename T> requires SignedInt<T> || UnsignedInt<T>
+	constexpr bool operator ==(const T& rhs) const
+	{
+		return rhs == max_v<T>;
+	}
+
+	template <typename T> requires SignedInt<T> || UnsignedInt<T>
+	constexpr std::strong_ordering operator <=>(const T& rhs) const
+	{
+		return max_v<T> <=> rhs;
+	}
+
+	template <typename T> requires SignedInt<T> || UnsignedInt<T>
+	constexpr operator T() const
+	{
+		return max_v<T>;
+	}
+} amax;
+
+// Compare signed or unsigned type with its minimal value (like zero or INT_MIN)
+constexpr struct amin_impl_t
+{
+	template <typename T> requires SignedInt<T> || UnsignedInt<T>
+	constexpr bool operator ==(const T& rhs) const
+	{
+		return rhs == min_v<T>;
+	}
+
+	template <typename T> requires SignedInt<T> || UnsignedInt<T>
+	constexpr std::strong_ordering operator <=>(const T& rhs) const
+	{
+		return min_v<T> <=> rhs;
+	}
+
+	template <typename T> requires SignedInt<T> || UnsignedInt<T>
+	constexpr operator T() const
+	{
+		return min_v<T>;
+	}
+} amin;
 
 template <typename T, typename T2>
 inline u32 offset32(T T2::*const mptr)
@@ -609,62 +732,25 @@ struct offset32_detail<T3 T4::*>
 	}
 };
 
-// Helper function, used by ""_u16, ""_u32, ""_u64
-constexpr u32 to_u8(char c)
-{
-	return static_cast<u8>(c);
-}
-
-// Convert 1-2-byte string to u16 value like reinterpret_cast does
+// Convert 0-2-byte string to u16 value like reinterpret_cast does
 constexpr u16 operator""_u16(const char* s, usz /*length*/)
 {
-	if constexpr (std::endian::little == std::endian::native)
-	{
-		return static_cast<u16>(to_u8(s[1]) << 8 | to_u8(s[0]));
-	}
-	else
-	{
-		return static_cast<u16>(to_u8(s[0]) << 8 | to_u8(s[1]));
-	}
+	char buf[2]{s[0], s[1]};
+	return std::bit_cast<u16>(buf);
 }
 
 // Convert 3-4-byte string to u32 value like reinterpret_cast does
 constexpr u32 operator""_u32(const char* s, usz /*length*/)
 {
-	if constexpr (std::endian::little == std::endian::native)
-	{
-		return to_u8(s[3]) << 24 | to_u8(s[2]) << 16 | to_u8(s[1]) << 8 | to_u8(s[0]);
-	}
-	else
-	{
-		return to_u8(s[0]) << 24 | to_u8(s[1]) << 16 | to_u8(s[2]) << 8 | to_u8(s[3]);
-	}
+	char buf[4]{s[0], s[1], s[2], s[3]};
+	return std::bit_cast<u32>(buf);
 }
 
-// Convert 5-6-byte string to u64 value like reinterpret_cast does
-constexpr u64 operator""_u48(const char* s, usz /*length*/)
+// Convert 5-8-byte string to u64 value like reinterpret_cast does
+constexpr u64 operator""_u64(const char* s, usz len)
 {
-	if constexpr (std::endian::little == std::endian::native)
-	{
-		return static_cast<u64>(to_u8(s[5]) << 8 | to_u8(s[4])) << 32 | to_u8(s[3]) << 24 | to_u8(s[2]) << 16 | to_u8(s[1]) << 8 | to_u8(s[0]);
-	}
-	else
-	{
-		return static_cast<u64>(to_u8(s[0]) << 8 | to_u8(s[1])) << 32 | to_u8(s[2]) << 24 | to_u8(s[3]) << 16 | to_u8(s[4]) << 8 | to_u8(s[5]);
-	}
-}
-
-// Convert 7-8-byte string to u64 value like reinterpret_cast does
-constexpr u64 operator""_u64(const char* s, usz /*length*/)
-{
-	if constexpr (std::endian::little == std::endian::native)
-	{
-		return static_cast<u64>(to_u8(s[7]) << 24 | to_u8(s[6]) << 16 | to_u8(s[5]) << 8 | to_u8(s[4])) << 32 | to_u8(s[3]) << 24 | to_u8(s[2]) << 16 | to_u8(s[1]) << 8 | to_u8(s[0]);
-	}
-	else
-	{
-		return static_cast<u64>(to_u8(s[0]) << 24 | to_u8(s[1]) << 16 | to_u8(s[2]) << 8 | to_u8(s[3])) << 32 | to_u8(s[4]) << 24 | to_u8(s[5]) << 16 | to_u8(s[6]) << 8 | to_u8(s[7]);
-	}
+	char buf[8]{s[0], s[1], s[2], s[3], s[4], (len < 6 ? '\0' : s[5]), (len < 7 ? '\0' : s[6]), (len < 8 ? '\0' : s[7])};
+	return std::bit_cast<u64>(buf);
 }
 
 #if !defined(__INTELLISENSE__) && !__has_builtin(__builtin_COLUMN) && !defined(_MSC_VER)
@@ -881,7 +967,7 @@ template <typename CT, typename = decltype(static_cast<u32>(std::declval<CT>().s
 template <typename T, usz Size>
 [[nodiscard]] constexpr u32 size32(const T (&)[Size])
 {
-	static_assert(Size < UINT32_MAX, "Array is too big for 32-bit");
+	static_assert(Size < u32{umax}, "Array is too big for 32-bit");
 	return static_cast<u32>(Size);
 }
 

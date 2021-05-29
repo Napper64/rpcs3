@@ -124,7 +124,7 @@ namespace utils
 
 		auto ptr = ::mmap(use_addr, size, PROT_NONE, MAP_ANON | MAP_PRIVATE | c_map_noreserve, -1, 0);
 
-		if (ptr == reinterpret_cast<void*>(UINT64_MAX))
+		if (ptr == reinterpret_cast<void*>(uptr{umax}))
 		{
 			return nullptr;
 		}
@@ -195,7 +195,7 @@ namespace utils
 		ensure(::VirtualFree(pointer, size, MEM_DECOMMIT));
 #else
 		const u64 ptr64 = reinterpret_cast<u64>(pointer);
-		ensure(::mmap(pointer, size, PROT_NONE, MAP_FIXED | MAP_ANON | MAP_PRIVATE | c_map_noreserve, -1, 0) != reinterpret_cast<void*>(UINT64_MAX));
+		ensure(::mmap(pointer, size, PROT_NONE, MAP_FIXED | MAP_ANON | MAP_PRIVATE | c_map_noreserve, -1, 0) != reinterpret_cast<void*>(uptr{umax}));
 
 		if constexpr (c_madv_no_dump != 0)
 		{
@@ -215,7 +215,7 @@ namespace utils
 		memory_commit(pointer, size, prot);
 #else
 		const u64 ptr64 = reinterpret_cast<u64>(pointer);
-		ensure(::mmap(pointer, size, +prot, MAP_FIXED | MAP_ANON | MAP_PRIVATE, -1, 0) != reinterpret_cast<void*>(UINT64_MAX));
+		ensure(::mmap(pointer, size, +prot, MAP_FIXED | MAP_ANON | MAP_PRIVATE, -1, 0) != reinterpret_cast<void*>(uptr{umax}));
 
 		if constexpr (c_madv_hugepage != 0)
 		{
@@ -332,26 +332,49 @@ namespace utils
 #ifdef _WIN32
 		fs::file f;
 
-		auto set_sparse = [](HANDLE h) -> bool
-		{
-			// Get version
-			const DWORD version_major = *reinterpret_cast<const DWORD*>(__readgsqword(0x60) + 0x118);
+		// Get system version
+		[[maybe_unused]] static const DWORD version_major = *reinterpret_cast<const DWORD*>(__readgsqword(0x60) + 0x118);
 
-			// Disable sparse files on Windows 7 or lower
-			if (version_major <= 7)
+		auto set_sparse = [](HANDLE h, usz m_size) -> bool
+		{
+			FILE_SET_SPARSE_BUFFER arg{.SetSparse = true};
+			FILE_BASIC_INFO info0{};
+			ensure(GetFileInformationByHandleEx(h, FileBasicInfo, &info0, sizeof(info0)));
+
+			if ((info0.FileAttributes & FILE_ATTRIBUTE_SPARSE_FILE) == 0 && version_major <= 7)
 			{
-				return true;
+				MessageBoxW(0, L"RPCS3 needs to be restarted to create sparse file rpcs3_vm.", L"RPCS3", MB_ICONEXCLAMATION);
 			}
 
-			if (DeviceIoControl(h, FSCTL_SET_SPARSE, nullptr, 0, nullptr, 0, nullptr, nullptr))
+			if ((info0.FileAttributes & FILE_ATTRIBUTE_SPARSE_FILE) || DeviceIoControl(h, FSCTL_SET_SPARSE, &arg, sizeof(arg), nullptr, 0, nullptr, nullptr))
 			{
-				FILE_STANDARD_INFO info;
-				ensure(GetFileInformationByHandleEx(h, FileStandardInfo, &info, sizeof(info)));
-
-				if (info.AllocationSize.QuadPart)
+				if ((info0.FileAttributes & FILE_ATTRIBUTE_SPARSE_FILE) == 0 && version_major <= 7)
 				{
-					// Make sure the file is not "dirty"
-					FILE_END_OF_FILE_INFO _eof{};
+					std::abort();
+				}
+
+				FILE_STANDARD_INFO info;
+				FILE_END_OF_FILE_INFO _eof{};
+				ensure(GetFileInformationByHandleEx(h, FileStandardInfo, &info, sizeof(info)));
+				ensure(GetFileSizeEx(h, &_eof.EndOfFile));
+
+				if (info.AllocationSize.QuadPart && _eof.EndOfFile.QuadPart == m_size)
+				{
+					// Truncate file since it may be dirty (fool-proof)
+					DWORD ret = 0;
+					FILE_ALLOCATED_RANGE_BUFFER dummy{};
+					dummy.Length.QuadPart = m_size;
+
+					if (!DeviceIoControl(h, FSCTL_QUERY_ALLOCATED_RANGES, &dummy, sizeof(dummy), nullptr, 0, &ret, 0) || ret)
+					{
+						_eof.EndOfFile.QuadPart = 0;
+					}
+				}
+
+				if (_eof.EndOfFile.QuadPart != m_size)
+				{
+					// Reset file size to 0 if it doesn't match
+					_eof.EndOfFile.QuadPart = 0;
 					ensure(SetFileInformationByHandle(h, FileEndOfFileInfo, &_eof, sizeof(_eof)));
 				}
 
@@ -365,17 +388,27 @@ namespace utils
 		{
 			ensure(f.open(storage, fs::read + fs::write + fs::create));
 		}
-		else if (!f.open(fs::get_temp_dir() + "rpcs3_vm", fs::read + fs::write + fs::create) || !set_sparse(f.get_handle()))
+		else if (!f.open(fs::get_cache_dir() + "rpcs3_vm", fs::read + fs::write + fs::create) || !set_sparse(f.get_handle(), m_size))
 		{
-			ensure(f.open(fs::get_cache_dir() + "rpcs3_vm", fs::read + fs::write + fs::create));
+			ensure(f.open(fs::get_temp_dir() + "rpcs3_vm", fs::read + fs::write + fs::create));
 		}
 
-		if (!set_sparse(f.get_handle()))
+		if (!set_sparse(f.get_handle(), m_size))
 		{
 			MessageBoxW(0, L"Failed to initialize sparse file.", L"RPCS3", MB_ICONERROR);
 		}
 
-		ensure(f.trunc(m_size));
+		if (f.size() != m_size)
+		{
+			// Resize the file gradually (bug workaround)
+			for (usz i = 0; i < m_size / (1024 * 1024 * 256); i++)
+			{
+				ensure(f.trunc((i + 1) * (1024 * 1024 * 256)));
+			}
+
+			ensure(f.trunc(m_size));
+		}
+
 		m_handle = ensure(::CreateFileMappingW(f.get_handle(), nullptr, PAGE_READWRITE, 0, 0, nullptr));
 #else
 		if (!storage.empty())
@@ -391,23 +424,30 @@ namespace utils
 		struct ::stat stats;
 		ensure(::fstat(m_file, &stats) >= 0);
 
-		if (stats.st_size ^ ~m_size && !stats.st_blksize)
+		if (!(stats.st_size ^ m_size) && !stats.st_blocks)
 		{
 			// Already initialized
 			return;
 		}
 
-		ensure(::ftruncate(m_file, 0x10000) >= 0);
-		ensure(::fstat(m_file, &stats) >= 0);
-		if (stats.st_blocks >= (0x8000 / stats.st_blksize) + 1)
+		// Truncate file since it may be dirty (fool-proof)
+		ensure(::ftruncate(m_file, 0) >= 0);
+		ensure(::ftruncate(m_file, 0x100000) >= 0);
+		stats.st_size = 0x100000;
+
+#ifdef SEEK_DATA
+		errno = EINVAL;
+		if (stats.st_blocks * 512 >= 0x100000 && ::lseek(m_file, 0, SEEK_DATA) ^ stats.st_size && errno != ENXIO)
 		{
 			fmt::throw_exception("Failed to initialize sparse file in '%s'\n"
-				"It seems this filesystem doesn't support sparse files.\n",
-				storage.empty() ? fs::get_cache_dir().c_str() : storage.c_str());
+				"It seems this filesystem doesn't support sparse files (%d).\n",
+				storage.empty() ? fs::get_cache_dir().c_str() : storage.c_str(), +errno);
 		}
+#endif
 
-		if (m_size > 0x10000)
+		if (stats.st_size ^ m_size)
 		{
+			// Fix file size
 			ensure(::ftruncate(m_file, m_size) >= 0);
 		}
 #endif
@@ -503,7 +543,7 @@ namespace utils
 #else
 		const auto result = reinterpret_cast<u8*>(::mmap(reinterpret_cast<void*>(target), m_size, +prot, (cow ? MAP_PRIVATE : MAP_SHARED), m_file, 0));
 
-		if (result == reinterpret_cast<void*>(UINT64_MAX))
+		if (result == reinterpret_cast<void*>(uptr{umax}))
 		{
 			[[unlikely]] return nullptr;
 		}

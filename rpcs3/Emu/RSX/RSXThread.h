@@ -486,7 +486,7 @@ namespace rsx
 			virtual void begin_occlusion_query(occlusion_query_info* /*query*/) {}
 			virtual void end_occlusion_query(occlusion_query_info* /*query*/) {}
 			virtual bool check_occlusion_query_status(occlusion_query_info* /*query*/) { return true; }
-			virtual void get_occlusion_query_result(occlusion_query_info* query) { query->result = UINT32_MAX; }
+			virtual void get_occlusion_query_result(occlusion_query_info* query) { query->result = -1; }
 			virtual void discard_occlusion_query(occlusion_query_info* /*query*/) {}
 		};
 
@@ -585,6 +585,8 @@ namespace rsx
 		bool supports_hw_renormalization;    // Should be true on NV hardware which matches PS3 texture renormalization behaviour
 		bool supports_hw_a2one;              // Alpha to one
 		bool supports_hw_conditional_render; // Conditional render
+		bool supports_passthrough_dma;       // DMA passthrough
+		bool supports_asynchronous_compute;  // Async compute
 	};
 
 	struct sampled_image_descriptor_base;
@@ -687,6 +689,7 @@ namespace rsx
 		GcmZcullInfo zculls[limits::zculls_count];
 
 		void capture_frame(const std::string &name);
+		const backend_configuration& get_backend_config() const { return backend_config; }
 
 	public:
 		std::shared_ptr<named_thread<class ppu_thread>> intr_thread;

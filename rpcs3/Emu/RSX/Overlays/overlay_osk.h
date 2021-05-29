@@ -1,6 +1,7 @@
 #pragma once
 
 #include "overlays.h"
+#include "overlay_edit_text.hpp"
 #include "overlay_osk_panel.h"
 #include "Emu/Cell/Modules/cellOskDialog.h"
 
@@ -73,7 +74,7 @@ namespace rsx
 			compiled_resource m_cached_resource;
 
 			u32 flags = 0;
-			u32 char_limit = UINT32_MAX;
+			u32 char_limit = umax;
 
 			std::vector<osk_panel> m_panels;
 			usz m_panel_index = 0;

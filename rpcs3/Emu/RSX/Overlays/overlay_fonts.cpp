@@ -2,6 +2,16 @@
 #include "overlay_controls.h"
 #include "Emu/system_config.h"
 
+#ifndef _WIN32
+#include <unistd.h>
+#include <sys/types.h>
+#include <pwd.h>
+
+#if defined(__DragonFly__) || defined(__FreeBSD__) || defined(__NetBSD__)
+#include <sys/sysctl.h>
+#endif
+#endif
+
 namespace rsx
 {
 	namespace overlays
@@ -414,7 +424,7 @@ namespace rsx
 			std::vector<vertex> result;
 			f32 unused_x, unused_y;
 
-			render_text_ex(result, unused_x, unused_y, text, UINT32_MAX, max_width, wrap);
+			render_text_ex(result, unused_x, unused_y, text, -1, max_width, wrap);
 			return result;
 		}
 

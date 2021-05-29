@@ -126,9 +126,9 @@ extern void ppu_initialize();
 extern void ppu_finalize(const ppu_module& info);
 extern bool ppu_initialize(const ppu_module& info, bool = false);
 static void ppu_initialize2(class jit_compiler& jit, const ppu_module& module_part, const std::string& cache_path, const std::string& obj_name);
-extern std::pair<std::shared_ptr<lv2_overlay>, CellError> ppu_load_overlay(const ppu_exec_object&, const std::string& path);
+extern std::pair<std::shared_ptr<lv2_overlay>, CellError> ppu_load_overlay(const ppu_exec_object&, const std::string& path, s64 file_offset);
 extern void ppu_unload_prx(const lv2_prx&);
-extern std::shared_ptr<lv2_prx> ppu_load_prx(const ppu_prx_object&, const std::string&);
+extern std::shared_ptr<lv2_prx> ppu_load_prx(const ppu_prx_object&, const std::string&, s64 file_offset);
 extern void ppu_execute_syscall(ppu_thread& ppu, u64 code);
 static bool ppu_break(ppu_thread& ppu, ppu_opcode_t op);
 
@@ -594,7 +594,7 @@ extern bool ppu_patch(u32 addr, u32 value)
 
 std::array<u32, 2> op_branch_targets(u32 pc, ppu_opcode_t op)
 {
-	std::array<u32, 2> res{pc + 4, UINT32_MAX};
+	std::array<u32, 2> res{pc + 4, umax};
 
 	switch (const auto type = g_ppu_itype.decode(op.opcode))
 	{
@@ -608,7 +608,7 @@ std::array<u32, 2> op_branch_targets(u32 pc, ppu_opcode_t op)
 	case ppu_itype::BCLR:
 	case ppu_itype::UNK:
 	{
-		res[0] = UINT32_MAX;
+		res[0] = umax;
 		break;
 	}
 	default: break;
@@ -633,7 +633,7 @@ std::string ppu_thread::dump_regs() const
 		constexpr u32 max_str_len = 32;
 		constexpr u32 hex_count = 8;
 
-		if (reg <= UINT32_MAX && vm::check_addr<max_str_len>(static_cast<u32>(reg)))
+		if (reg <= u32{umax} && vm::check_addr<max_str_len>(static_cast<u32>(reg)))
 		{
 			bool is_function = false;
 			u32 toc = 0;
@@ -759,7 +759,7 @@ std::vector<std::pair<u32, u32>> ppu_thread::dump_callstack_list() const
 	// Determine stack range
 	const u64 r1 = gpr[1];
 
-	if (r1 > UINT32_MAX || r1 % 0x10)
+	if (r1 > u32{umax} || r1 % 0x10)
 	{
 		return {};
 	}
@@ -799,7 +799,7 @@ std::vector<std::pair<u32, u32>> ppu_thread::dump_callstack_list() const
 
 		auto is_invalid = [](u64 addr)
 		{
-			if (addr > UINT32_MAX || addr % 4 || !vm::check_addr(static_cast<u32>(addr), vm::page_executable))
+			if (addr > u32{umax} || addr % 4 || !vm::check_addr(static_cast<u32>(addr), vm::page_executable))
 			{
 				return true;
 			}
@@ -1356,7 +1356,7 @@ extern void sse_cellbe_stvrx_v0(u64 addr, __m128i a);
 
 void ppu_trap(ppu_thread& ppu, u64 addr)
 {
-	ensure((addr & (~u64{UINT32_MAX} | 0x3)) == 0);
+	ensure((addr & (~u64{0xffff'ffff} | 0x3)) == 0);
 	ppu.cia = static_cast<u32>(addr);
 
 	u32 add = static_cast<u32>(g_cfg.core.stub_ppu_traps) * 4;
@@ -1931,7 +1931,7 @@ static bool ppu_store_reservation(ppu_thread& ppu, u32 addr, u64 reg_value)
 			{
 				switch (u64 count = ppu_stcx_accurate_tx(addr & -8, rtime, ppu.rdata, std::bit_cast<u64>(new_data)))
 				{
-				case UINT64_MAX:
+				case umax:
 				{
 					auto& all_data = *vm::get_super_ptr<spu_rdata_t>(addr & -128);
 					auto& sdata = *vm::get_super_ptr<atomic_be_t<u64>>(addr & -8);
@@ -2493,7 +2493,7 @@ extern void ppu_precompile(std::vector<std::string>& dir_queue, std::vector<lv2_
 			{
 				std::unique_lock lock(sprx_mtx);
 
-				if (auto prx = ppu_load_prx(obj, path))
+				if (auto prx = ppu_load_prx(obj, path, offset))
 				{
 					lock.unlock();
 					obj.clear(), src.close(); // Clear decrypted file and elf object memory
@@ -2517,7 +2517,7 @@ extern void ppu_precompile(std::vector<std::string>& dir_queue, std::vector<lv2_
 					// Only one thread compiles OVL atm, other can compile PRX cuncurrently
 					std::unique_lock lock(ovl_mtx);
 
-					auto [ovlm, error] = ppu_load_overlay(obj, path);
+					auto [ovlm, error] = ppu_load_overlay(obj, path, offset);
 
 					if (error)
 					{

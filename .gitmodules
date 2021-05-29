@@ -12,7 +12,7 @@
 	url = https://github.com/RPCS3/llvm-mirror
 	ignore = dirty
 [submodule "Vulkan/glslang"]
-	path = Vulkan/glslang
+	path = 3rdparty/glslang/glslang
 	url = https://github.com/KhronosGroup/glslang.git
 	ignore = dirty
 [submodule "Vulkan/spirv-tools"]
@@ -32,7 +32,7 @@
 	url = https://github.com/madler/zlib
 	ignore = dirty
 [submodule "3rdparty/hidapi"]
-	path = 3rdparty/hidapi
+	path = 3rdparty/hidapi/hidapi
 	url = https://github.com/RPCS3/hidapi
 	branch = master
 	ignore = dirty

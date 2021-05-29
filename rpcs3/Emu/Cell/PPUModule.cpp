@@ -832,7 +832,7 @@ void try_spawn_ppu_if_exclusive_program(const ppu_module& m)
 	}
 }
 
-std::shared_ptr<lv2_prx> ppu_load_prx(const ppu_prx_object& elf, const std::string& path)
+std::shared_ptr<lv2_prx> ppu_load_prx(const ppu_prx_object& elf, const std::string& path, s64 file_offset)
 {
 	if (elf != elf_error::ok)
 	{
@@ -1111,6 +1111,7 @@ std::shared_ptr<lv2_prx> ppu_load_prx(const ppu_prx_object& elf, const std::stri
 	prx->epilogue.set(prx->specials[0x330f7005]);
 	prx->name = path.substr(path.find_last_of('/') + 1);
 	prx->path = path;
+	prx->offset = file_offset;
 
 	sha1_finish(&sha, prx->sha1);
 
@@ -1213,7 +1214,7 @@ bool ppu_load_exec(const ppu_exec_object& elf)
 
 			const addr_range r = addr_range::start_length(static_cast<u32>(prog.p_vaddr), static_cast<u32>(prog.p_memsz));
 
-			if ((prog.p_vaddr | prog.p_memsz) > UINT32_MAX || !r.valid() || !r.inside(addr_range::start_length(0x00000000, 0x30000000)))
+			if ((prog.p_vaddr | prog.p_memsz) > u32{umax} || !r.valid() || !r.inside(addr_range::start_length(0x00000000, 0x30000000)))
 			{
 				return false;
 			}
@@ -1433,7 +1434,7 @@ bool ppu_load_exec(const ppu_exec_object& elf)
 		{
 			ppu_loader.notice("TLS info segment found: tls-image=*0x%x, image-size=0x%x, tls-size=0x%x", prog.p_vaddr, prog.p_filesz, prog.p_memsz);
 
-			if ((prog.p_vaddr | prog.p_filesz | prog.p_memsz) > UINT32_MAX)
+			if ((prog.p_vaddr | prog.p_filesz | prog.p_memsz) > u32{umax})
 			{
 				ppu_loader.fatal("ppu_load_exec(): TLS segment is invalid!");
 				return false;
@@ -1588,7 +1589,7 @@ bool ppu_load_exec(const ppu_exec_object& elf)
 			{
 				ppu_loader.warning("Loading library: %s", name);
 
-				auto prx = ppu_load_prx(obj, lle_dir + name);
+				auto prx = ppu_load_prx(obj, lle_dir + name, 0);
 
 				if (prx->funcs.empty())
 				{
@@ -1807,7 +1808,7 @@ bool ppu_load_exec(const ppu_exec_object& elf)
 	return true;
 }
 
-std::pair<std::shared_ptr<lv2_overlay>, CellError> ppu_load_overlay(const ppu_exec_object& elf, const std::string& path)
+std::pair<std::shared_ptr<lv2_overlay>, CellError> ppu_load_overlay(const ppu_exec_object& elf, const std::string& path, s64 file_offset)
 {
 	if (elf != elf_error::ok)
 	{
@@ -1843,6 +1844,7 @@ std::pair<std::shared_ptr<lv2_overlay>, CellError> ppu_load_overlay(const ppu_ex
 	// Set path (TODO)
 	ovlm->name = path.substr(path.find_last_of('/') + 1);
 	ovlm->path = path;
+	ovlm->offset = file_offset;
 
 	u32 end = 0;
 
