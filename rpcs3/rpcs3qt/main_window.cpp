@@ -146,12 +146,8 @@ bool main_window::Init(bool with_cli_boot)
 
 	if (enable_play_last)
 	{
-<<<<<<< HEAD
-		ui->sysPauseAct->setText(tr("&Play last played game\tCtrl+E"));
-=======
 		ui->sysPauseAct->setText(tr("&Play last played game"));
 		ui->sysPauseAct->setShortcut(QKeySequence("Ctrl+R"));
->>>>>>> master
 		ui->sysPauseAct->setIcon(m_icon_play);
 		ui->toolbar_start->setToolTip(start_tooltip);
 	}
@@ -1527,12 +1523,8 @@ void main_window::OnEmuPause() const
 	m_thumb_playPause->setToolTip(resume_tooltip);
 	m_thumb_playPause->setIcon(m_icon_thumb_play);
 #endif
-<<<<<<< HEAD
-	ui->sysPauseAct->setText(tr("&Resume\tCtrl+E"));
-=======
 	ui->sysPauseAct->setText(tr("&Resume"));
 	ui->sysPauseAct->setShortcut(QKeySequence("Ctrl+R"));
->>>>>>> master
 	ui->sysPauseAct->setIcon(m_icon_play);
 	ui->toolbar_start->setIcon(m_icon_play);
 	ui->toolbar_start->setText(tr("Play"));
@@ -1552,12 +1544,8 @@ void main_window::OnEmuStop()
 
 	m_debugger_frame->UpdateUI();
 
-<<<<<<< HEAD
-	ui->sysPauseAct->setText(Emu.IsReady() ? tr("&Play\tCtrl+E") : tr("&Resume\tCtrl+E"));
-=======
 	ui->sysPauseAct->setText(Emu.IsReady() ? tr("&Play") : tr("&Resume"));
 	ui->sysPauseAct->setShortcut(QKeySequence("Ctrl+R"));
->>>>>>> master
 	ui->sysPauseAct->setIcon(m_icon_play);
 #ifdef _WIN32
 	m_thumb_playPause->setToolTip(play_tooltip);
@@ -1616,12 +1604,8 @@ void main_window::OnEmuReady() const
 	m_thumb_playPause->setToolTip(play_tooltip);
 	m_thumb_playPause->setIcon(m_icon_thumb_play);
 #endif
-<<<<<<< HEAD
-	ui->sysPauseAct->setText(Emu.IsReady() ? tr("&Play\tCtrl+E") : tr("&Resume\tCtrl+E"));
-=======
 	ui->sysPauseAct->setText(Emu.IsReady() ? tr("&Play") : tr("&Resume"));
 	ui->sysPauseAct->setShortcut(QKeySequence("Ctrl+R"));
->>>>>>> master
 	ui->sysPauseAct->setIcon(m_icon_play);
 	ui->toolbar_start->setIcon(m_icon_play);
 	ui->toolbar_start->setText(tr("Play"));
@@ -2677,25 +2661,7 @@ void main_window::keyPressEvent(QKeyEvent *keyEvent)
 
 	if (((keyEvent->modifiers() & Qt::AltModifier) && keyEvent->key() == Qt::Key_Return) || (isFullScreen() && keyEvent->key() == Qt::Key_Escape))
 	{
-<<<<<<< HEAD
-		switch (keyEvent->key())
-		{
-		case Qt::Key_E:
-		{
-			switch (Emu.GetStatus())
-			{
-			case system_state::paused: Emu.Resume(); return;
-			case system_state::ready: Emu.Run(true); return;
-			default: return;
-			}
-		}
-		case Qt::Key_P: if (Emu.IsRunning()) Emu.Pause(); return;
-		case Qt::Key_S: if (!Emu.IsStopped()) Emu.Stop(); return;
-		case Qt::Key_R: if (!Emu.GetBoot().empty()) Emu.Restart(); return;
-		}
-=======
 		ui->toolbar_fullscreen->trigger();
->>>>>>> master
 	}
 }
 

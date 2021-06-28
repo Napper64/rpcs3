@@ -27,11 +27,6 @@ else()
 	add_compile_options(-fstack-protector)
 	add_compile_options(-msse -msse2 -mcx16)
 
-<<<<<<< HEAD
-	if ((${CMAKE_CXX_COMPILER_ID} MATCHES "GNU") AND (CMAKE_CXX_COMPILER_VERSION VERSION_LESS 10.1))
-		add_compile_options(-fconcepts)
-	endif()
-=======
 	add_compile_options(-Werror=old-style-cast)
 	add_compile_options(-Werror=sign-compare)
 	add_compile_options(-Werror=reorder)
@@ -50,7 +45,6 @@ else()
 	add_compile_options(-Wempty-body)
 	add_compile_options(-Wredundant-decls)
 	#add_compile_options(-Weffc++)
->>>>>>> master
 
 	add_compile_options(-Wstrict-aliasing=1)
 	#add_compile_options(-Wnull-dereference)
