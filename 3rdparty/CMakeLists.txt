@@ -1,26 +1,13 @@
 find_package(PkgConfig)
 include(ExternalProject)
+include(CMakeDependentOption)
 
 # Dummy target to use when lib isn't available
 add_library(3rdparty_dummy_lib INTERFACE)
 
 
 # ZLib
-if (USE_SYSTEM_ZLIB)
-	find_package(ZLIB QUIET)
-endif()
-
-if (NOT ZLIB_FOUND)
-	message(STATUS "Using builtin ZLIB")
-	set(SKIP_INSTALL_ALL ON)
-	add_subdirectory(zlib EXCLUDE_FROM_ALL)
-	set(ZLIB_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/zlib" "${CMAKE_CURRENT_BINARY_DIR}/zlib")
-	set(ZLIB_LIBRARY zlibstatic)
-endif()
-
-add_library(3rdparty_zlib INTERFACE)
-target_link_libraries(3rdparty_zlib INTERFACE ${ZLIB_LIBRARY})
-target_include_directories(3rdparty_zlib INTERFACE ${ZLIB_INCLUDE_DIR})
+add_subdirectory(zlib EXCLUDE_FROM_ALL)
 
 # 7z sdk
 add_subdirectory(7z EXCLUDE_FROM_ALL)
@@ -82,8 +69,9 @@ endif()
 add_subdirectory(hidapi)
 
 
-# glslang
-add_subdirectory(glslang)
+# Vulkan
+add_subdirectory(glslang EXCLUDE_FROM_ALL)
+add_subdirectory(SPIRV EXCLUDE_FROM_ALL)
 
 
 # yaml-cpp
@@ -115,12 +103,6 @@ else()
 	target_include_directories(xxhash INTERFACE xxHash)
 endif()
 
-
-# cereal
-add_library(3rdparty_cereal INTERFACE)
-target_include_directories(3rdparty_cereal INTERFACE cereal/include)
-
-
 # OpenGL
 
 # Prefer GLVND for OpenGL rather than legacy, unless it's been defined elsewhere, in the case of AppImage builds
@@ -146,11 +128,6 @@ else()
 			-DGL_GLEXT_PROTOTYPES
 			-DGLX_GLXEXT_PROTOTYPES)
 endif()
-
-
-# span
-add_library(3rdparty_span INTERFACE)
-target_include_directories(3rdparty_span INTERFACE span/include)
 
 
 # stblib
@@ -368,9 +345,7 @@ add_library(3rdparty::yaml-cpp ALIAS yaml-cpp)
 add_library(3rdparty::xxhash ALIAS xxhash)
 add_library(3rdparty::hidapi ALIAS 3rdparty_hidapi)
 add_library(3rdparty::libpng ALIAS ${LIBPNG_TARGET})
-add_library(3rdparty::cereal ALIAS 3rdparty_cereal)
 add_library(3rdparty::opengl ALIAS 3rdparty_opengl)
-add_library(3rdparty::span ALIAS 3rdparty_span)
 add_library(3rdparty::stblib ALIAS 3rdparty_stblib)
 add_library(3rdparty::discordRPC ALIAS 3rdparty_discordRPC)
 add_library(3rdparty::alsa ALIAS ${ALSA_TARGET})

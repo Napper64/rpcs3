@@ -8,6 +8,7 @@
 #include "rsx_vertex_data.h"
 #include "rsx_utils.h"
 #include "Emu/Cell/timers.hpp"
+#include "Program/program_util.h"
 
 namespace rsx
 {
@@ -492,7 +493,7 @@ namespace rsx
 		std::array<vertex_texture, 4> vertex_textures;
 
 
-		std::array<u32, 512 * 4> transform_program{};
+		std::array<u32, max_vertex_program_instructions * 4> transform_program{};
 		std::array<u32[4], 512> transform_constants{};
 
 		draw_clause current_draw_clause{};
@@ -553,15 +554,6 @@ namespace rsx
 		void reset();
 
 		void init();
-
-		template<typename Archive>
-		void serialize(Archive & ar)
-		{
-			ar(transform_program,
-//				transform_constants,
-				registers
-				);
-		}
 
 		u16 viewport_width() const
 		{

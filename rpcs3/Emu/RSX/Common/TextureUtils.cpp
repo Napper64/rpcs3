@@ -6,42 +6,29 @@
 
 #include "util/asm.hpp"
 
+namespace utils
+{
+	template <typename T, typename U>
+	[[nodiscard]] auto bless(const std::span<U>& span)
+	{
+		return std::span<T>(bless<T>(span.data()), sizeof(U) * span.size() / sizeof(T));
+	}
+}
+
 namespace
 {
-	// FIXME: GSL as_span break build if template parameter is non const with current revision.
-	// Replace with true as_span when fixed.
-	template <typename T>
-	gsl::span<T> as_span_workaround(gsl::span<std::byte> unformated_span)
-	{
-		return{ reinterpret_cast<T*>(unformated_span.data()), unformated_span.size_bytes() / sizeof(T) };
-	}
 
-	template <typename T>
-	gsl::span<T> as_const_span(gsl::span<const std::byte> unformated_span)
-	{
-		return{ reinterpret_cast<T*>(unformated_span.data()), unformated_span.size_bytes() / sizeof(T) };
-	}
-
-	// TODO: Make this function part of GSL
-	// Note: Doesn't handle overlapping range detection.
-	template<typename T1, typename T2>
-	constexpr void copy(gsl::span<T1> dst, gsl::span<T2> src)
-	{
-		static_assert(std::is_convertible<T1, T2>::value, "Cannot convert source and destination span type.");
-		std::copy(src.begin(), src.end(), dst.begin());
-	}
-
-	u16 convert_rgb655_to_rgb565(const u16 bits)
-	{
-		// g6 = g5
-		// r5 = (((bits & 0xFC00) >> 1) & 0xFC00) << 1 is equivalent to truncating the least significant bit
-		return (bits & 0xF81F) | (bits & 0x3E0) << 1;
-	}
+u16 convert_rgb655_to_rgb565(const u16 bits)
+{
+	// g6 = g5
+	// r5 = (((bits & 0xFC00) >> 1) & 0xFC00) << 1 is equivalent to truncating the least significant bit
+	return (bits & 0xF81F) | (bits & 0x3E0) << 1;
+}
 
 struct copy_unmodified_block
 {
 	template<typename T, typename U>
-	static void copy_mipmap_level(gsl::span<T> dst, gsl::span<const U> src, u16 words_per_block, u16 width_in_block, u16 row_count, u16 depth, u8 border, u32 dst_pitch_in_block, u32 src_pitch_in_block)
+	static void copy_mipmap_level(std::span<T> dst, std::span<const U> src, u16 words_per_block, u16 width_in_block, u16 row_count, u16 depth, u8 border, u32 dst_pitch_in_block, u32 src_pitch_in_block)
 	{
 		static_assert(sizeof(T) == sizeof(U), "Type size doesn't match.");
 
@@ -49,7 +36,7 @@ struct copy_unmodified_block
 		{
 			// Fast copy
 			const auto data_length = src_pitch_in_block * words_per_block * row_count * depth;
-			copy(dst, src.subspan(0, data_length));
+			std::copy_n(src.begin(), std::min<usz>({data_length, src.size(), dst.size()}), dst.begin());
 			return;
 		}
 
@@ -68,8 +55,8 @@ struct copy_unmodified_block
 
 			for (int row = 0; row < row_count; ++row)
 			{
-				// NNOTE: src_offset is already shifted along the border at initialization
-				copy(dst.subspan(dst_offset, width_in_words), src.subspan(src_offset, width_in_words));
+				// NOTE: src_offset is already shifted along the border at initialization
+				std::copy_n(src.begin() + src_offset, width_in_words, dst.begin() + dst_offset);
 
 				src_offset += src_pitch_in_words;
 				dst_offset += dst_pitch_in_words;
@@ -86,7 +73,7 @@ struct copy_unmodified_block_swizzled
 	// NOTE: Pixel channel types are T (out) and const U (in). V is the pixel block type that consumes one whole pixel.
 	// e.g 4x16-bit format can use u16, be_t<u16>, u64 as arguments
 	template<typename T, typename U>
-	static void copy_mipmap_level(gsl::span<T> dst, gsl::span<const U> src, u16 words_per_block, u16 width_in_block, u16 row_count, u16 depth, u8 border, u32 dst_pitch_in_block)
+	static void copy_mipmap_level(std::span<T> dst, std::span<const U> src, u16 words_per_block, u16 width_in_block, u16 row_count, u16 depth, u8 border, u32 dst_pitch_in_block)
 	{
 		if (std::is_same<T, U>::value && dst_pitch_in_block == width_in_block && words_per_block == 1 && !border)
 		{
@@ -131,7 +118,7 @@ struct copy_unmodified_block_swizzled
 				}
 			}
 
-			gsl::span<const U> src_span = tmp;
+			std::span<const U> src_span = tmp;
 			copy_unmodified_block::copy_mipmap_level(dst, src_span, words_per_block, width_in_block, row_count, depth, border, dst_pitch_in_block, padded_width);
 		}
 	}
@@ -140,7 +127,7 @@ struct copy_unmodified_block_swizzled
 struct copy_unmodified_block_vtc
 {
 	template<typename T, typename U>
-	static void copy_mipmap_level(gsl::span<T> dst, gsl::span<const U> src, u16 width_in_block, u16 row_count, u16 depth, u32 /*dst_pitch_in_block*/, u32 /*src_pitch_in_block*/)
+	static void copy_mipmap_level(std::span<T> dst, std::span<const U> src, u16 width_in_block, u16 row_count, u16 depth, u32 /*dst_pitch_in_block*/, u32 /*src_pitch_in_block*/)
 	{
 		static_assert(sizeof(T) == sizeof(U), "Type size doesn't match.");
 		u32 row_element_count = width_in_block * row_count;
@@ -164,7 +151,7 @@ struct copy_unmodified_block_vtc
 			for (u32 i = 0; i < row_element_count; i += 1)
 			{
 				// Copy one span (8 bytes for DXT1 or 16 bytes for DXT5)
-				copy(dst.subspan(dst_offset + i, 1), src.subspan(src_offset + i * 4, 1));
+				dst[dst_offset + i] = src[src_offset + i * 4];
 			}
 
 			dst_offset += row_element_count;
@@ -189,7 +176,7 @@ struct copy_unmodified_block_vtc
 			for (u32 i = 0; i < row_element_count; i += 1)
 			{
 				// Copy one span (8 bytes for DXT1 or 16 bytes for DXT5)
-				copy(dst.subspan(dst_offset + i, 1), src.subspan(src_offset + i * vtc_tile_count, 1));
+				dst[dst_offset + i] = src[src_offset + i * vtc_tile_count];
 			}
 
 			dst_offset += row_element_count;
@@ -201,7 +188,7 @@ struct copy_unmodified_block_vtc
 struct copy_decoded_rb_rg_block
 {
 	template <bool SwapWords = false, typename T>
-	static void copy_mipmap_level(gsl::span<u32> dst, gsl::span<const T> src, u16 width_in_block, u16 row_count, u16 depth, u32 dst_pitch_in_block, u32 src_pitch_in_block)
+	static void copy_mipmap_level(std::span<u32> dst, std::span<const T> src, u16 width_in_block, u16 row_count, u16 depth, u32 dst_pitch_in_block, u32 src_pitch_in_block)
 	{
 		static_assert(sizeof(T) == 4, "Type size doesn't match.");
 
@@ -248,7 +235,7 @@ struct copy_decoded_rb_rg_block
 struct copy_rgb655_block
 {
 	template<typename T>
-	static void copy_mipmap_level(gsl::span<u16> dst, gsl::span<const T> src, u16 width_in_block, u16 row_count, u16 depth, u8 border, u32 dst_pitch_in_block, u32 src_pitch_in_block)
+	static void copy_mipmap_level(std::span<u16> dst, std::span<const T> src, u16 width_in_block, u16 row_count, u16 depth, u8 border, u32 dst_pitch_in_block, u32 src_pitch_in_block)
 	{
 		static_assert(sizeof(T) == 2, "Type size doesn't match.");
 
@@ -280,7 +267,7 @@ struct copy_rgb655_block
 struct copy_rgb655_block_swizzled
 {
 	template<typename T, typename U>
-	static void copy_mipmap_level(gsl::span<T> dst, gsl::span<const U> src, u16 width_in_block, u16 row_count, u16 depth, u8 border, u32 dst_pitch_in_block)
+	static void copy_mipmap_level(std::span<T> dst, std::span<const U> src, u16 width_in_block, u16 row_count, u16 depth, u8 border, u32 dst_pitch_in_block)
 	{
 		u32 padded_width, padded_height;
 		if (border)
@@ -299,7 +286,7 @@ struct copy_rgb655_block_swizzled
 
 		rsx::convert_linear_swizzle_3d<U>(src.data(), tmp.data(), padded_width, padded_height, depth);
 
-		gsl::span<const U> src_span = tmp;
+		std::span<const U> src_span = tmp;
 		copy_rgb655_block::copy_mipmap_level(dst, src_span, width_in_block, row_count, depth, border, dst_pitch_in_block, padded_width);
 	}
 };
@@ -434,7 +421,7 @@ namespace
 
 				const u32 slice_sz = src_pitch_in_block * block_size_in_bytes * full_height_in_block * depth;
 				current_subresource_layout.pitch_in_block = src_pitch_in_block;
-				current_subresource_layout.data = gsl::span<const std::byte>(texture_data_pointer + offset_in_src, slice_sz);
+				current_subresource_layout.data = std::span<const std::byte>(texture_data_pointer + offset_in_src, slice_sz);
 
 				offset_in_src += slice_sz;
 				miplevel_width_in_texel = std::max(miplevel_width_in_texel / 2, 1);
@@ -598,7 +585,7 @@ namespace rsx
 		return get_subresources_layout_impl(texture);
 	}
 
-	texture_memory_info upload_texture_subresource(gsl::span<std::byte> dst_buffer, const rsx::subresource_layout& src_layout, int format, bool is_swizzled, texture_uploader_capabilities& caps)
+	texture_memory_info upload_texture_subresource(std::span<std::byte> dst_buffer, const rsx::subresource_layout& src_layout, int format, bool is_swizzled, texture_uploader_capabilities& caps)
 	{
 		u16 w = src_layout.width_in_block;
 		u16 h = src_layout.height_in_block;
@@ -627,22 +614,22 @@ namespace rsx
 
 		case CELL_GCM_TEXTURE_COMPRESSED_B8R8_G8R8:
 		{
-			copy_decoded_rb_rg_block::copy_mipmap_level<true>(as_span_workaround<u32>(dst_buffer), as_const_span<const u32>(src_layout.data), w, h, depth, get_row_pitch_in_block<u32>(src_layout.width_in_texel, caps.alignment), src_layout.pitch_in_block);
+			copy_decoded_rb_rg_block::copy_mipmap_level<true>(utils::bless<u32>(dst_buffer), utils::bless<const u32>(src_layout.data), w, h, depth, get_row_pitch_in_block<u32>(src_layout.width_in_texel, caps.alignment), src_layout.pitch_in_block);
 			break;
 		}
 
 		case CELL_GCM_TEXTURE_COMPRESSED_R8B8_R8G8:
 		{
-			copy_decoded_rb_rg_block::copy_mipmap_level(as_span_workaround<u32>(dst_buffer), as_const_span<const u32>(src_layout.data), w, h, depth, get_row_pitch_in_block<u32>(src_layout.width_in_texel, caps.alignment), src_layout.pitch_in_block);
+			copy_decoded_rb_rg_block::copy_mipmap_level(utils::bless<u32>(dst_buffer), utils::bless<const u32>(src_layout.data), w, h, depth, get_row_pitch_in_block<u32>(src_layout.width_in_texel, caps.alignment), src_layout.pitch_in_block);
 			break;
 		}
 
 		case CELL_GCM_TEXTURE_R6G5B5:
 		{
 			if (is_swizzled)
-				copy_rgb655_block_swizzled::copy_mipmap_level(as_span_workaround<u16>(dst_buffer), as_const_span<const be_t<u16>>(src_layout.data), w, h, depth, src_layout.border, get_row_pitch_in_block<u16>(w, caps.alignment));
+				copy_rgb655_block_swizzled::copy_mipmap_level(utils::bless<u16>(dst_buffer), utils::bless<const be_t<u16>>(src_layout.data), w, h, depth, src_layout.border, get_row_pitch_in_block<u16>(w, caps.alignment));
 			else
-				copy_rgb655_block::copy_mipmap_level(as_span_workaround<u16>(dst_buffer), as_const_span<const be_t<u16>>(src_layout.data), w, h, depth, src_layout.border, get_row_pitch_in_block<u16>(w, caps.alignment), src_layout.pitch_in_block);
+				copy_rgb655_block::copy_mipmap_level(utils::bless<u16>(dst_buffer), utils::bless<const be_t<u16>>(src_layout.data), w, h, depth, src_layout.border, get_row_pitch_in_block<u16>(w, caps.alignment), src_layout.pitch_in_block);
 			break;
 		}
 
@@ -707,7 +694,7 @@ namespace rsx
 				// PS3 uses the Nvidia VTC memory layout for compressed 3D textures.
 				// This is only supported using Nvidia OpenGL.
 				// Remove the VTC tiling to support ATI and Vulkan.
-				copy_unmodified_block_vtc::copy_mipmap_level(as_span_workaround<u64>(dst_buffer), as_const_span<const u64>(src_layout.data), w, h, depth, get_row_pitch_in_block<u64>(w, caps.alignment), src_layout.pitch_in_block);
+				copy_unmodified_block_vtc::copy_mipmap_level(utils::bless<u64>(dst_buffer), utils::bless<const u64>(src_layout.data), w, h, depth, get_row_pitch_in_block<u64>(w, caps.alignment), src_layout.pitch_in_block);
 			}
 			else if (caps.supports_zero_copy)
 			{
@@ -716,7 +703,7 @@ namespace rsx
 			}
 			else
 			{
-				copy_unmodified_block::copy_mipmap_level(as_span_workaround<u64>(dst_buffer), as_const_span<const u64>(src_layout.data), 1, w, h, depth, 0, get_row_pitch_in_block<u64>(w, caps.alignment), src_layout.pitch_in_block);
+				copy_unmodified_block::copy_mipmap_level(utils::bless<u64>(dst_buffer), utils::bless<const u64>(src_layout.data), 1, w, h, depth, 0, get_row_pitch_in_block<u64>(w, caps.alignment), src_layout.pitch_in_block);
 			}
 			break;
 		}
@@ -729,7 +716,7 @@ namespace rsx
 				// PS3 uses the Nvidia VTC memory layout for compressed 3D textures.
 				// This is only supported using Nvidia OpenGL.
 				// Remove the VTC tiling to support ATI and Vulkan.
-				copy_unmodified_block_vtc::copy_mipmap_level(as_span_workaround<u128>(dst_buffer), as_const_span<const u128>(src_layout.data), w, h, depth, get_row_pitch_in_block<u128>(w, caps.alignment), src_layout.pitch_in_block);
+				copy_unmodified_block_vtc::copy_mipmap_level(utils::bless<u128>(dst_buffer), utils::bless<const u128>(src_layout.data), w, h, depth, get_row_pitch_in_block<u128>(w, caps.alignment), src_layout.pitch_in_block);
 			}
 			else if (caps.supports_zero_copy)
 			{
@@ -738,7 +725,7 @@ namespace rsx
 			}
 			else
 			{
-				copy_unmodified_block::copy_mipmap_level(as_span_workaround<u128>(dst_buffer), as_const_span<const u128>(src_layout.data), 1, w, h, depth, 0, get_row_pitch_in_block<u128>(w, caps.alignment), src_layout.pitch_in_block);
+				copy_unmodified_block::copy_mipmap_level(utils::bless<u128>(dst_buffer), utils::bless<const u128>(src_layout.data), 1, w, h, depth, 0, get_row_pitch_in_block<u128>(w, caps.alignment), src_layout.pitch_in_block);
 			}
 			break;
 		}
@@ -753,7 +740,7 @@ namespace rsx
 			{
 				if (is_swizzled)
 				{
-					copy_unmodified_block_swizzled::copy_mipmap_level(as_span_workaround<u8>(dst_buffer), as_const_span<const u8>(src_layout.data), words_per_block, w, h, depth, src_layout.border, dst_pitch_in_block);
+					copy_unmodified_block_swizzled::copy_mipmap_level(utils::bless<u8>(dst_buffer), utils::bless<const u8>(src_layout.data), words_per_block, w, h, depth, src_layout.border, dst_pitch_in_block);
 				}
 				else if (caps.supports_zero_copy)
 				{
@@ -762,7 +749,7 @@ namespace rsx
 				}
 				else
 				{
-					copy_unmodified_block::copy_mipmap_level(as_span_workaround<u8>(dst_buffer), as_const_span<const u8>(src_layout.data), words_per_block, w, h, depth, src_layout.border, dst_pitch_in_block, src_layout.pitch_in_block);
+					copy_unmodified_block::copy_mipmap_level(utils::bless<u8>(dst_buffer), utils::bless<const u8>(src_layout.data), words_per_block, w, h, depth, src_layout.border, dst_pitch_in_block, src_layout.pitch_in_block);
 				}
 			}
 			else
@@ -796,11 +783,11 @@ namespace rsx
 					}
 					else if (word_size == 2)
 					{
-						copy_unmodified_block::copy_mipmap_level(as_span_workaround<u16>(dst_buffer), as_const_span<const u16>(src_layout.data), words_per_block, w, h, depth, src_layout.border, dst_pitch_in_block, src_layout.pitch_in_block);
+						copy_unmodified_block::copy_mipmap_level(utils::bless<u16>(dst_buffer), utils::bless<const u16>(src_layout.data), words_per_block, w, h, depth, src_layout.border, dst_pitch_in_block, src_layout.pitch_in_block);
 					}
 					else if (word_size == 4)
 					{
-						copy_unmodified_block::copy_mipmap_level(as_span_workaround<u32>(dst_buffer), as_const_span<const u32>(src_layout.data), words_per_block, w, h, depth, src_layout.border, dst_pitch_in_block, src_layout.pitch_in_block);
+						copy_unmodified_block::copy_mipmap_level(utils::bless<u32>(dst_buffer), utils::bless<const u32>(src_layout.data), words_per_block, w, h, depth, src_layout.border, dst_pitch_in_block, src_layout.pitch_in_block);
 					}
 				}
 				else
@@ -808,16 +795,16 @@ namespace rsx
 					if (word_size == 2)
 					{
 						if (is_swizzled)
-							copy_unmodified_block_swizzled::copy_mipmap_level(as_span_workaround<u16>(dst_buffer), as_const_span<const be_t<u16>>(src_layout.data), words_per_block, w, h, depth, src_layout.border, dst_pitch_in_block);
+							copy_unmodified_block_swizzled::copy_mipmap_level(utils::bless<u16>(dst_buffer), utils::bless<const be_t<u16>>(src_layout.data), words_per_block, w, h, depth, src_layout.border, dst_pitch_in_block);
 						else
-							copy_unmodified_block::copy_mipmap_level(as_span_workaround<u16>(dst_buffer), as_const_span<const be_t<u16>>(src_layout.data), words_per_block, w, h, depth, src_layout.border, dst_pitch_in_block, src_layout.pitch_in_block);
+							copy_unmodified_block::copy_mipmap_level(utils::bless<u16>(dst_buffer), utils::bless<const be_t<u16>>(src_layout.data), words_per_block, w, h, depth, src_layout.border, dst_pitch_in_block, src_layout.pitch_in_block);
 					}
 					else if (word_size == 4)
 					{
 						if (is_swizzled)
-							copy_unmodified_block_swizzled::copy_mipmap_level(as_span_workaround<u32>(dst_buffer), as_const_span<const be_t<u32>>(src_layout.data), words_per_block, w, h, depth, src_layout.border, dst_pitch_in_block);
+							copy_unmodified_block_swizzled::copy_mipmap_level(utils::bless<u32>(dst_buffer), utils::bless<const be_t<u32>>(src_layout.data), words_per_block, w, h, depth, src_layout.border, dst_pitch_in_block);
 						else
-							copy_unmodified_block::copy_mipmap_level(as_span_workaround<u32>(dst_buffer), as_const_span<const be_t<u32>>(src_layout.data), words_per_block, w, h, depth, src_layout.border, dst_pitch_in_block, src_layout.pitch_in_block);
+							copy_unmodified_block::copy_mipmap_level(utils::bless<u32>(dst_buffer), utils::bless<const be_t<u32>>(src_layout.data), words_per_block, w, h, depth, src_layout.border, dst_pitch_in_block, src_layout.pitch_in_block);
 					}
 				}
 			}

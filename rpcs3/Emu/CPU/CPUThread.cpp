@@ -812,6 +812,8 @@ bool cpu_thread::check_state() noexcept
 
 void cpu_thread::notify()
 {
+	state.notify_one();
+
 	// Downcast to correct type
 	if (id_type() == 1)
 	{
@@ -827,24 +829,11 @@ void cpu_thread::notify()
 	}
 }
 
-void cpu_thread::abort()
+cpu_thread& cpu_thread::operator=(thread_state)
 {
 	state += cpu_flag::exit;
 	state.notify_one(cpu_flag::exit);
-
-	// Downcast to correct type
-	if (id_type() == 1)
-	{
-		*static_cast<named_thread<ppu_thread>*>(this) = thread_state::aborting;
-	}
-	else if (id_type() == 2)
-	{
-		*static_cast<named_thread<spu_thread>*>(this) = thread_state::aborting;
-	}
-	else
-	{
-		fmt::throw_exception("Invalid cpu_thread type");
-	}
+	return *this;
 }
 
 std::string cpu_thread::get_name() const
@@ -1119,31 +1108,9 @@ bool cpu_thread::suspend_work::push(cpu_thread* _this) noexcept
 	return true;
 }
 
-void cpu_thread::stop_all() noexcept
+void cpu_thread::cleanup() noexcept
 {
-	if (g_tls_this_thread)
-	{
-		// Report unsupported but unnecessary case
-		sys_log.fatal("cpu_thread::stop_all() has been called from a CPU thread.");
-		return;
-	}
-	else
-	{
-		auto on_stop = [](u32, cpu_thread& cpu)
-		{
-			cpu.abort();
-		};
-
-		idm::select<named_thread<ppu_thread>>(on_stop);
-		idm::select<named_thread<spu_thread>>(on_stop);
-	}
-
-	sys_log.notice("All CPU threads have been signaled.");
-
-	while (s_cpu_counter)
-	{
-		std::this_thread::sleep_for(1ms);
-	}
+	ensure(!s_cpu_counter);
 
 	sys_log.notice("All CPU threads have been stopped. [+: %u]", +g_threads_created);
 

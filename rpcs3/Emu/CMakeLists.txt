@@ -36,9 +36,9 @@ target_include_directories(rpcs3_emu
 # Utilities
 target_sources(rpcs3_emu PRIVATE
     ../util/atomic.cpp
+    ../util/media_utils.cpp
     ../util/logs.cpp
     ../util/yaml.cpp
-    ../util/cereal.cpp
     ../util/vm_native.cpp
     ../util/dyn_lib.cpp
     ../util/sysinfo.cpp
@@ -62,8 +62,7 @@ target_include_directories(rpcs3_emu PUBLIC "${CMAKE_SOURCE_DIR}")
 
 target_link_libraries(rpcs3_emu
     PUBLIC
-        3rdparty::pugixml
-        3rdparty::span)
+        3rdparty::pugixml)
 
 if(MSVC)
     set_source_files_properties("../../Utilities/JIT.cpp" PROPERTIES COMPILE_FLAGS /GR-)
@@ -75,12 +74,6 @@ if(MSVC)
     set_source_files_properties("../util/yaml.cpp" PROPERTIES COMPILE_FLAGS /EHsc)
 else()
     set_source_files_properties("../util/yaml.cpp" PROPERTIES COMPILE_FLAGS -fexceptions)
-endif()
-
-if(MSVC)
-    set_source_files_properties("../util/cereal.cpp" PROPERTIES COMPILE_FLAGS /GR)
-else()
-    set_source_files_properties("../util/cereal.cpp" PROPERTIES COMPILE_FLAGS -frtti)
 endif()
 
 # Crypto
@@ -500,12 +493,12 @@ endif()
 
 target_link_libraries(rpcs3_emu
     PUBLIC
-        3rdparty::ffmpeg 3rdparty::cereal
+        3rdparty::ffmpeg
         3rdparty::opengl 3rdparty::stblib
         3rdparty::vulkan 3rdparty::glew
         3rdparty::libusb 3rdparty::wolfssl
     PRIVATE
-        3rdparty::span 3rdparty::xxhash
+        3rdparty::xxhash
 )
 
 if(APPLE)

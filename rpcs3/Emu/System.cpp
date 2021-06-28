@@ -30,7 +30,7 @@
 #include "../Crypto/unself.h"
 #include "util/yaml.hpp"
 #include "util/logs.hpp"
-#include "util/cereal.hpp"
+#include "util/serialization.hpp"
 
 #include <fstream>
 #include <memory>
@@ -380,18 +380,31 @@ bool Emulator::BootRsxCapture(const std::string& path)
 	}
 
 	std::unique_ptr<rsx::frame_capture_data> frame = std::make_unique<rsx::frame_capture_data>();
-	cereal_deserialize(*frame, in_file.to_string());
+	utils::serial load_manager;
+	load_manager.set_reading_state(in_file.to_vector<u8>());
+
+	load_manager(*frame);
 	in_file.close();
 
-	if (frame->magic != rsx::FRAME_CAPTURE_MAGIC)
+	if (frame->magic != rsx::c_fc_magic)
 	{
 		sys_log.error("Invalid rsx capture file!");
 		return false;
 	}
 
-	if (frame->version != rsx::FRAME_CAPTURE_VERSION)
+	if (frame->version != rsx::c_fc_version)
 	{
-		sys_log.error("Rsx capture file version not supported! Expected %d, found %d", rsx::FRAME_CAPTURE_VERSION, frame->version);
+		sys_log.error("Rsx capture file version not supported! Expected %d, found %d", +rsx::c_fc_version, frame->version);
+		return false;
+	}
+
+	if (frame->LE_format != (std::endian::little == std::endian::native))
+	{
+		static constexpr std::string_view machines[2]{"Big-Endian", "Little-Endian"};
+
+		sys_log.error("Rsx capture byte endianness not supported! Expected %s format, found %s format"
+			, machines[frame->LE_format ^ 1], machines[frame->LE_format]);
+
 		return false;
 	}
 
@@ -1339,9 +1352,9 @@ void Emulator::Run(bool start_playtime)
 
 	m_pause_start_time = 0;
 	m_pause_amend_time = 0;
-	m_state = system_state::running;
-
 	rpcs3::utils::configure_logs();
+
+	m_state = system_state::running;
 
 	// Run main thread
 	idm::check<named_thread<ppu_thread>>(ppu_thread::id_base, [](named_thread<ppu_thread>& cpu)
@@ -1497,6 +1510,8 @@ void Emulator::Stop(bool restart)
 		return;
 	}
 
+	sys_log.notice("Stopping emulator...");
+
 	named_thread stop_watchdog("Stop Watchdog", [&]()
 	{
 		for (uint i = 0; thread_ctrl::state() != thread_state::aborting;)
@@ -1519,17 +1534,38 @@ void Emulator::Stop(bool restart)
 		}
 	});
 
-	sys_log.notice("Stopping emulator...");
+	// Signal threads
+	if (auto rsx = g_fxo->try_get<rsx::thread>())
+	{
+		*static_cast<cpu_thread*>(rsx) = thread_state::aborting;
+	}
+
+	for (const auto& [type, data] : *g_fxo)
+	{
+		if (type.stop)
+		{
+			type.stop(data, thread_state::aborting);
+		}
+	}
+
+	sys_log.notice("All emulation threads have been signaled.");
+
+	// Wait fot newly created cpu_thread to see that emulation has been stopped
+	id_manager::g_mutex.lock_unlock();
 
 	GetCallbacks().on_stop();
 
-	if (auto rsx = g_fxo->try_get<rsx::thread>())
+	// Join threads
+	for (const auto& [type, data] : *g_fxo)
 	{
-		// TODO: notify?
-		rsx->state += cpu_flag::exit;
+		if (type.stop)
+		{
+			type.stop(data, thread_state::finished);
+		}
 	}
 
-	cpu_thread::stop_all();
+	cpu_thread::cleanup();
+
 	g_fxo->reset();
 
 	sys_log.notice("All threads have been stopped.");

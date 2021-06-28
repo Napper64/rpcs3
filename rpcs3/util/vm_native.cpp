@@ -341,6 +341,13 @@ namespace utils
 			FILE_BASIC_INFO info0{};
 			ensure(GetFileInformationByHandleEx(h, FileBasicInfo, &info0, sizeof(info0)));
 
+			if ((info0.FileAttributes & FILE_ATTRIBUTE_ARCHIVE) || (~info0.FileAttributes & FILE_ATTRIBUTE_TEMPORARY))
+			{
+				info0.FileAttributes &= ~FILE_ATTRIBUTE_ARCHIVE;
+				info0.FileAttributes |= FILE_ATTRIBUTE_TEMPORARY;
+				ensure(SetFileInformationByHandle(h, FileBasicInfo, &info0, sizeof(info0)));
+			}
+
 			if ((info0.FileAttributes & FILE_ATTRIBUTE_SPARSE_FILE) == 0 && version_major <= 7)
 			{
 				MessageBoxW(0, L"RPCS3 needs to be restarted to create sparse file rpcs3_vm.", L"RPCS3", MB_ICONEXCLAMATION);
@@ -384,20 +391,30 @@ namespace utils
 			return false;
 		};
 
+		const std::string storage2 = fs::get_temp_dir() + "rpcs3_vm_sparse.tmp";
+		const std::string storage3 = fs::get_cache_dir() + "rpcs3_vm_sparse.tmp";
+
 		if (!storage.empty())
 		{
+			// Explicitly specified storage
 			ensure(f.open(storage, fs::read + fs::write + fs::create));
 		}
-		else if (!f.open(fs::get_cache_dir() + "rpcs3_vm", fs::read + fs::write + fs::create) || !set_sparse(f.get_handle(), m_size))
+		else if (!f.open(storage2, fs::read + fs::write + fs::create) || !set_sparse(f.get_handle(), m_size))
 		{
-			ensure(f.open(fs::get_temp_dir() + "rpcs3_vm", fs::read + fs::write + fs::create));
+			// Fallback storage
+			ensure(f.open(storage3, fs::read + fs::write + fs::create));
+		}
+		else
+		{
+			goto check;
 		}
 
 		if (!set_sparse(f.get_handle(), m_size))
 		{
-			MessageBoxW(0, L"Failed to initialize sparse file.", L"RPCS3", MB_ICONERROR);
+			MessageBoxW(0, L"Failed to initialize sparse file.\nCan't find a filesystem with sparse file support (NTFS).", L"RPCS3", MB_ICONERROR);
 		}
 
+	check:
 		if (f.size() != m_size)
 		{
 			// Resize the file gradually (bug workaround)
@@ -411,13 +428,30 @@ namespace utils
 
 		m_handle = ensure(::CreateFileMappingW(f.get_handle(), nullptr, PAGE_READWRITE, 0, 0, nullptr));
 #else
+
+		// TODO: check overcommit configuration of other supported platforms to bypass rpcs3_vm creation
+#ifdef __linux__
+		if (const char c = fs::file("/proc/sys/vm/overcommit_memory").read<char>(); c == '0' || c == '1')
+		{
+			// Simply use memfd for overcommit memory
+			m_file = ::memfd_create_("", 0);
+			ensure(m_file >= 0);
+			ensure(::ftruncate(m_file, m_size) >= 0);
+			return;
+		}
+		else
+		{
+			fprintf(stderr, "Reading /proc/sys/vm/overcommit_memory: %c", c);
+		}
+#endif
+
 		if (!storage.empty())
 		{
 			m_file = ::open(storage.c_str(), O_RDWR | O_CREAT, S_IWUSR | S_IRUSR);
 		}
 		else
 		{
-			m_file = ::open((fs::get_cache_dir() + "rpcs3_vm").c_str(), O_RDWR | O_CREAT, S_IWUSR | S_IRUSR);
+			m_file = ::open((fs::get_cache_dir() + "rpcs3_vm_sparse.tmp").c_str(), O_RDWR | O_CREAT, S_IWUSR | S_IRUSR);
 		}
 
 		ensure(m_file >= 0);

@@ -501,7 +501,7 @@ VKGSRender::VKGSRender() : GSRender()
 	else
 		m_vertex_cache = std::make_unique<vk::weak_vertex_cache>();
 
-	m_shaders_cache = std::make_unique<vk::shader_cache>(*m_prog_buffer, "vulkan", "v1.91");
+	m_shaders_cache = std::make_unique<vk::shader_cache>(*m_prog_buffer, "vulkan", "v1.92");
 
 	open_command_buffer();
 
@@ -565,7 +565,6 @@ VKGSRender::VKGSRender() : GSRender()
 		case vk::driver_vendor::NVIDIA:
 			if (auto chip_family = vk::get_chip_family();
 				chip_family == vk::chip_class::NV_kepler ||
-				chip_family == vk::chip_class::NV_mobile_kepler || // TODO: Deprecate this classification, it just complicates things
 				chip_family == vk::chip_class::NV_maxwell)
 			{
 				rsx_log.error("Older NVIDIA cards do not meet requirements for asynchronous compute due to some driver fakery.");
@@ -593,7 +592,7 @@ VKGSRender::VKGSRender() : GSRender()
 		if (backend_config.supports_asynchronous_compute)
 		{
 			// Run only if async compute can be used.
-			g_fxo->init<vk::async_scheduler_thread>();
+			g_fxo->init<vk::async_scheduler_thread>("Vulkan Async Scheduler"sv);
 		}
 	}
 }
@@ -1144,7 +1143,7 @@ void VKGSRender::clear_surface(u32 mask)
 	std::tie(scissor_x, scissor_y, scissor_w, scissor_h) = rsx::clip_region<u16>(fb_width, fb_height, scissor_x, scissor_y, scissor_w, scissor_h, true);
 	VkClearRect region = { { { scissor_x, scissor_y }, { scissor_w, scissor_h } }, 0, 1 };
 
-	const bool require_mem_load = (scissor_w * scissor_h) < (fb_width * fb_height);
+	const bool full_frame = (scissor_w == fb_width && scissor_h == fb_height);
 	bool update_color = false, update_z = false;
 	auto surface_depth_format = rsx::method_registers.surface_depth_fmt();
 
@@ -1174,35 +1173,38 @@ void VKGSRender::clear_surface(u32 mask)
 
 				if (ds->samples() > 1)
 				{
-					if (!require_mem_load) ds->stencil_init_flags &= 0xFF;
+					if (full_frame) ds->stencil_init_flags &= 0xFF;
 					ds->stencil_init_flags |= clear_stencil;
 				}
 			}
+		}
 
-			if ((mask & 0x3) != 0x3 && !require_mem_load && ds->state_flags & rsx::surface_state_flags::erase_bkgnd)
+		if ((depth_stencil_mask && depth_stencil_mask != ds->aspect()) || !full_frame)
+		{
+			// At least one aspect is not being cleared or the clear does not cover the full frame
+			// Steps to initialize memory are required
+
+			if (ds->state_flags & rsx::surface_state_flags::erase_bkgnd &&  // Needs initialization
+				ds->old_contents.empty() && !g_cfg.video.read_depth_buffer) // No way to load data from memory, so no initialization given
 			{
-				ensure(depth_stencil_mask);
-
-				if (!g_cfg.video.read_depth_buffer)
+				// Only one aspect was cleared. Make sure to memory initialize the other before removing dirty flag
+				if (mask == 1)
 				{
-					// Only one aspect was cleared. Make sure to memory initialize the other before removing dirty flag
-					if (mask == 1)
-					{
-						// Depth was cleared, initialize stencil
-						depth_stencil_clear_values.depthStencil.stencil = 0xFF;
-						depth_stencil_mask |= VK_IMAGE_ASPECT_STENCIL_BIT;
-					}
-					else
-					{
-						// Stencil was cleared, initialize depth
-						depth_stencil_clear_values.depthStencil.depth = 1.f;
-						depth_stencil_mask |= VK_IMAGE_ASPECT_DEPTH_BIT;
-					}
+					// Depth was cleared, initialize stencil
+					depth_stencil_clear_values.depthStencil.stencil = 0xFF;
+					depth_stencil_mask |= VK_IMAGE_ASPECT_STENCIL_BIT;
 				}
 				else
 				{
-					ds->write_barrier(*m_current_command_buffer);
+					// Stencil was cleared, initialize depth
+					depth_stencil_clear_values.depthStencil.depth = 1.f;
+					depth_stencil_mask |= VK_IMAGE_ASPECT_DEPTH_BIT;
 				}
+			}
+			else
+			{
+				// Barrier required before any writes
+				ds->write_barrier(*m_current_command_buffer);
 			}
 		}
 	}
@@ -1251,6 +1253,17 @@ void VKGSRender::clear_surface(u32 mask)
 
 			if (colormask)
 			{
+				if (!use_fast_clear || !full_frame)
+				{
+					// If we're not clobber all the memory, a barrier is required
+					for (u8 index = m_rtts.m_bound_render_targets_config.first, count = 0;
+						count < m_rtts.m_bound_render_targets_config.second;
+						++count, ++index)
+					{
+						m_rtts.m_bound_render_targets[index].second->write_barrier(*m_current_command_buffer);
+					}
+				}
+
 				color_clear_values.color.float32[0] = static_cast<float>(clear_r) / 255;
 				color_clear_values.color.float32[1] = static_cast<float>(clear_g) / 255;
 				color_clear_values.color.float32[2] = static_cast<float>(clear_b) / 255;
@@ -1273,40 +1286,8 @@ void VKGSRender::clear_surface(u32 mask)
 						color_clear_values.color.float32[3]
 					};
 
-					VkRenderPass renderpass = VK_NULL_HANDLE;
 					auto attachment_clear_pass = vk::get_overlay_pass<vk::attachment_clear_pass>();
-					attachment_clear_pass->update_config(colormask, clear_color);
-
-					for (const auto &index : m_draw_buffers)
-					{
-						if (auto rtt = m_rtts.m_bound_render_targets[index].second)
-						{
-							if (require_mem_load) rtt->write_barrier(*m_current_command_buffer);
-
-							// Add a barrier to ensure previous writes are visible; also transitions into GENERAL layout
-							rtt->push_barrier(*m_current_command_buffer, VK_IMAGE_LAYOUT_GENERAL);
-
-							if (!renderpass)
-							{
-								std::vector<vk::image*> surfaces = { rtt };
-								const auto key = vk::get_renderpass_key(surfaces);
-								renderpass = vk::get_renderpass(*m_device, key);
-							}
-
-							attachment_clear_pass->run(*m_current_command_buffer, rtt, region.rect, renderpass);
-							rtt->pop_layout(*m_current_command_buffer);
-						}
-						else
-							fmt::throw_exception("Unreachable");
-					}
-				}
-
-				for (u8 index = m_rtts.m_bound_render_targets_config.first, count = 0;
-					count < m_rtts.m_bound_render_targets_config.second;
-					++count, ++index)
-				{
-					if (require_mem_load)
-						m_rtts.m_bound_render_targets[index].second->write_barrier(*m_current_command_buffer);
+					attachment_clear_pass->run(*m_current_command_buffer, m_draw_fbo, region.rect, colormask, clear_color, get_render_pass());
 				}
 
 				update_color = true;
@@ -1316,36 +1297,28 @@ void VKGSRender::clear_surface(u32 mask)
 
 	if (depth_stencil_mask)
 	{
-		if (m_rtts.m_bound_depth_stencil.first)
+		if ((depth_stencil_mask & VK_IMAGE_ASPECT_STENCIL_BIT) &&
+			rsx::method_registers.stencil_mask() != 0xff)
 		{
-			if (require_mem_load)
-			{
-				m_rtts.m_bound_depth_stencil.second->write_barrier(*m_current_command_buffer);
-			}
+			// Partial stencil clear. Disables fast stencil clear
+			auto ds = std::get<1>(m_rtts.m_bound_depth_stencil);
+			auto key = vk::get_renderpass_key({ ds });
+			auto renderpass = vk::get_renderpass(*m_device, key);
 
-			if ((depth_stencil_mask & VK_IMAGE_ASPECT_STENCIL_BIT) &&
-				rsx::method_registers.stencil_mask() != 0xff)
-			{
-				// Partial stencil clear. Disables fast stencil clear
-				auto ds = std::get<1>(m_rtts.m_bound_depth_stencil);
-				auto key = vk::get_renderpass_key({ ds });
-				auto renderpass = vk::get_renderpass(*m_device, key);
+			vk::get_overlay_pass<vk::stencil_clear_pass>()->run(
+				*m_current_command_buffer, ds, region.rect,
+				depth_stencil_clear_values.depthStencil.stencil,
+				rsx::method_registers.stencil_mask(), renderpass);
 
-				vk::get_overlay_pass<vk::stencil_clear_pass>()->run(
-					*m_current_command_buffer, ds, region.rect,
-					depth_stencil_clear_values.depthStencil.stencil,
-					rsx::method_registers.stencil_mask(), renderpass);
-
-				depth_stencil_mask &= ~VK_IMAGE_ASPECT_STENCIL_BIT;
-			}
-
-			if (depth_stencil_mask)
-			{
-				clear_descriptors.push_back({ static_cast<VkImageAspectFlags>(depth_stencil_mask), 0, depth_stencil_clear_values });
-			}
-
-			update_z = true;
+			depth_stencil_mask &= ~VK_IMAGE_ASPECT_STENCIL_BIT;
 		}
+
+		if (depth_stencil_mask)
+		{
+			clear_descriptors.push_back({ static_cast<VkImageAspectFlags>(depth_stencil_mask), 0, depth_stencil_clear_values });
+		}
+
+		update_z = true;
 	}
 
 	if (update_color || update_z)
@@ -2277,7 +2250,7 @@ void VKGSRender::prepare_rtts(rsx::framebuffer_creation_context context)
 		m_draw_fbo->release();
 	}
 
-	m_draw_fbo = vk::get_framebuffer(*m_device, fbo_width, fbo_height, m_cached_renderpass, m_fbo_images);
+	m_draw_fbo = vk::get_framebuffer(*m_device, fbo_width, fbo_height, VK_FALSE, m_cached_renderpass, m_fbo_images);
 	m_draw_fbo->add_ref();
 
 	set_viewport();

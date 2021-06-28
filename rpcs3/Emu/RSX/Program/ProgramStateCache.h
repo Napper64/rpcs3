@@ -5,9 +5,9 @@
 
 #include "Utilities/mutex.h"
 #include "util/logs.hpp"
-#include "Utilities/span.h"
 #include "util/fnv_hash.hpp"
 
+#include <span>
 #include <unordered_map>
 
 enum class SHADER_TYPE
@@ -22,7 +22,7 @@ namespace program_hash_util
 	{
 		struct vertex_program_metadata
 		{
-			std::bitset<512> instruction_mask;
+			std::bitset<rsx::max_vertex_program_instructions> instruction_mask;
 			u32 ucode_length;
 			u32 referenced_textures_mask;
 		};
@@ -398,7 +398,7 @@ public:
 			std::forward<Args>(args)...);   // Other arguments
 	}
 
-	void fill_fragment_constants_buffer(gsl::span<f32> dst_buffer, const RSXFragmentProgram& fragment_program, bool sanitize = false) const;
+	void fill_fragment_constants_buffer(std::span<f32> dst_buffer, const RSXFragmentProgram& fragment_program, bool sanitize = false) const;
 
 	void clear()
 	{

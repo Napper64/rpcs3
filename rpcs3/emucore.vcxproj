@@ -40,7 +40,7 @@
   <ItemDefinitionGroup>
     <ClCompile>
       <PrecompiledHeader>Use</PrecompiledHeader>
-      <AdditionalIncludeDirectories>..\3rdparty\wolfssl\;..\3rdparty\flatbuffers\include;..\3rdparty\libusb\libusb\libusb;..\3rdparty\zlib;..\llvm\include;..\llvm_build\include;$(VULKAN_SDK)\Include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\3rdparty\wolfssl\;..\3rdparty\flatbuffers\include;..\3rdparty\libusb\libusb\libusb;..\3rdparty\zlib\zlib;..\llvm\include;..\llvm_build\include;$(VULKAN_SDK)\Include</AdditionalIncludeDirectories>
       <Optimization Condition="'$(Configuration)|$(Platform)'=='Release|x64'">MaxSpeed</Optimization>
     </ClCompile>
     <PreBuildEvent>
@@ -96,13 +96,10 @@
     <ClCompile Include="util\atomic.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="util\media_utils.cpp" />
     <ClCompile Include="util\yaml.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <ExceptionHandling>Sync</ExceptionHandling>
-    </ClCompile>
-    <ClCompile Include="util\cereal.cpp">
-      <PrecompiledHeader>NotUsing</PrecompiledHeader>
-      <RuntimeTypeInfo>true</RuntimeTypeInfo>
     </ClCompile>
     <ClCompile Include="..\Utilities\bin_patch.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
@@ -490,6 +487,8 @@
     <ClInclude Include="Emu\system_config_types.h" />
     <ClInclude Include="Loader\mself.hpp" />
     <ClInclude Include="util\atomic.hpp" />
+    <ClInclude Include="util\media_utils.h" />
+    <ClInclude Include="util\serialization.hpp" />
     <ClInclude Include="util\v128.hpp" />
     <ClInclude Include="util\v128sse.hpp" />
     <ClInclude Include="util\to_endian.hpp" />

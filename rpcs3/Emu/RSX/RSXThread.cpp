@@ -17,12 +17,12 @@
 #include "Overlays/overlay_perf_metrics.h"
 #include "Program/GLSLCommon.h"
 #include "Utilities/date_time.h"
-#include "Utilities/span.h"
 #include "Utilities/StrUtil.h"
 
-#include "util/cereal.hpp"
+#include "util/serialization.hpp"
 #include "util/asm.hpp"
 
+#include <span>
 #include <sstream>
 #include <thread>
 #include <unordered_set>
@@ -38,6 +38,37 @@ rsx::frame_capture_data frame_capture;
 
 extern CellGcmOffsetTable offsetTable;
 extern thread_local std::string(*g_tls_log_prefix)();
+
+template <>
+bool serialize<rsx::rsx_state>(utils::serial& ar, rsx::rsx_state& o)
+{
+	return ar(o.transform_program, /*o.transform_constants,*/ o.registers);
+}
+
+template <>
+bool serialize<rsx::frame_capture_data>(utils::serial& ar, rsx::frame_capture_data& o)
+{
+	ar(o.magic, o.version, o.LE_format);
+
+	if (o.magic != rsx::c_fc_magic || o.version != rsx::c_fc_version || o.LE_format != (std::endian::little == std::endian::native))
+	{
+		return false;
+	}
+
+	return ar(o.tile_map, o.memory_map, o.memory_data_map, o.display_buffers_map, o.replay_commands, o.reg_state);
+}
+
+template <>
+bool serialize<rsx::frame_capture_data::memory_block_data>(utils::serial& ar, rsx::frame_capture_data::memory_block_data& o)
+{
+	return ar(o.data);
+}
+
+template <>
+bool serialize<rsx::frame_capture_data::replay_command>(utils::serial& ar, rsx::frame_capture_data::replay_command& o)
+{
+	return ar(o.rsx_command, o.memory_state, o.tile_state, o.display_buffer_state);
+}
 
 namespace rsx
 {
@@ -598,12 +629,13 @@ namespace rsx
 			// TODO: exit condition
 			while (!is_stopped())
 			{
+				const u64 current = get_system_time();
 				const u64 period_time = 1000000 / g_cfg.video.vblank_rate;
-				const u64 wait_sleep = period_time - u64{period_time >= host_min_quantum} * host_min_quantum;
+				const u64 wait_for = period_time - std::min<u64>(current - start_time, period_time);
+				const u64 wait_sleep = wait_for - u64{wait_for >= host_min_quantum} * host_min_quantum;
 
-				if (get_system_time() - start_time >= period_time)
+				if (!wait_for)
 				{
-					do
 					{
 						start_time += period_time;
 						vblank_count++;
@@ -627,10 +659,14 @@ namespace rsx
 							sys_rsx_context_attribute(0x55555555, 0xFED, 1, 0, 0, 0);
 						}
 					}
-					while (get_system_time() - start_time >= period_time);
-
+				}
+				else if (wait_sleep)
+				{
 					thread_ctrl::wait_for(wait_sleep);
-					continue;
+				}
+				else if (wait_for >= host_min_quantum / 3 * 2)
+				{
+					std::this_thread::yield();
 				}
 
 				if (Emu.IsPaused())
@@ -646,8 +682,6 @@ namespace rsx
 					// Restore difference
 					start_time = get_system_time() - start_time;
 				}
-
-				thread_ctrl::wait_for(100);
 			}
 		});
 
@@ -892,7 +926,7 @@ namespace rsx
 		return t + timestamp_subvalue;
 	}
 
-	gsl::span<const std::byte> thread::get_raw_index_array(const draw_clause& draw_indexed_clause) const
+	std::span<const std::byte> thread::get_raw_index_array(const draw_clause& draw_indexed_clause) const
 	{
 		if (!element_push_buffer.empty())
 		{
@@ -2248,27 +2282,14 @@ namespace rsx
 				}
 			} //end attribute placement check
 
-			// If data is passed via registers, it is already received in little endian
-			const bool is_be_type = (layout.attribute_placement[index] != attribute_buffer_placement::transient);
-			bool to_swap_bytes = is_be_type;
-
-			switch (type)
+			// Special compressed 4 components into one 4-byte value. Decoded as one value.
+			if (type == rsx::vertex_base_type::cmp)
 			{
-			case rsx::vertex_base_type::cmp:
-				// Compressed 4 components into one 4-byte value
 				size = 1;
-				break;
-			case rsx::vertex_base_type::ub:
-			case rsx::vertex_base_type::ub256:
-				// These are single byte formats, but inverted order (BGRA vs ARGB) when passed via registers
-				to_swap_bytes = (layout.attribute_placement[index] == attribute_buffer_placement::transient);
-				break;
-			default:
-				break;
 			}
 
-			if (to_swap_bytes) attrib1 |= swap_storage_mask;
-
+			// All data is passed in in PS3-native order (BE) so swap flag should be set
+			attrib1 |= swap_storage_mask;
 			attrib0 |= (static_cast<s32>(type) << 24);
 			attrib0 |= (size << 27);
 			attrib1 |= offset_in_block[index];
@@ -2863,11 +2884,14 @@ namespace rsx
 			const std::string file_path = fs::get_config_dir() + "captures/" + Emu.GetTitleID() + "_" + date_time::current_time_narrow() + "_capture.rrc";
 
 			// todo: may want to compress this data?
-			const std::string file_data = cereal_serialize(frame_capture);
+			utils::serial save_manager;
+			save_manager.reserve(0x800'0000); // 128MB
+
+			save_manager(frame_capture);
 
 			fs::pending_file temp(file_path);
 
-			if (temp.file && (temp.file.write(file_data), temp.commit(false)))
+			if (temp.file && (temp.file.write(save_manager.data), temp.commit(false)))
 			{
 				rsx_log.success("Capture successful: %s", file_path);
 			}

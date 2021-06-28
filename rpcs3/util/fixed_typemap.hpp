@@ -8,6 +8,8 @@
 #include <utility>
 #include <type_traits>
 
+enum class thread_state : u32;
+
 namespace stx
 {
 	// Simplified typemap with exactly one object of each used type, non-moveable. Initialized on init(). Destroyed on clear().
@@ -53,10 +55,11 @@ namespace stx
 #endif
 		}
 
-		// Save default constructor and destructor
+		// Save default constructor and destructor and optional joining operation
 		struct typeinfo
 		{
 			bool(*create)(uchar* ptr, manual_typemap&) noexcept = nullptr;
+			void(*stop)(void* ptr, thread_state) noexcept = nullptr;
 			void(*destroy)(void* ptr) noexcept = nullptr;
 			std::string_view name{};
 
@@ -87,6 +90,13 @@ namespace stx
 			}
 
 			template <typename T>
+			static void call_stop(void* ptr, thread_state state) noexcept
+			{
+				// Abort and/or join (expected thread_state::aborting or thread_state::finished)
+				*std::launder(static_cast<T*>(ptr)) = state;
+			}
+
+			template <typename T>
 			static typeinfo make_typeinfo()
 			{
 				static_assert(!std::is_copy_assignable_v<T> && !std::is_copy_constructible_v<T>, "Please make sure the object cannot be accidentally copied.");
@@ -94,6 +104,12 @@ namespace stx
 				typeinfo r;
 				r.create = &call_ctor<T>;
 				r.destroy = &call_dtor<T>;
+
+				if constexpr (std::is_assignable_v<T&, thread_state>)
+				{
+					r.stop = &call_stop<T>;
+				}
+
 #ifdef _MSC_VER
 				constexpr std::string_view name = parse_type(__FUNCSIG__);
 #else
@@ -139,8 +155,8 @@ namespace stx
 				clear();
 			}
 
-			m_order = new void*[stx::typelist<typeinfo>().count()];
-			m_info = new const typeinfo*[stx::typelist<typeinfo>().count()];
+			m_order = new void*[stx::typelist<typeinfo>().count() + 1];
+			m_info = new const typeinfo*[stx::typelist<typeinfo>().count() + 1];
 			m_init = new bool[stx::typelist<typeinfo>().count()]{};
 
 			if constexpr (Size == 0)
@@ -160,6 +176,9 @@ namespace stx
 				ensure(Align >= stx::typelist<typeinfo>().align());
 				m_data[0] = 0;
 			}
+
+			*m_order++ = nullptr;
+			*m_info++ = nullptr;
 		}
 
 		void init(bool reset = true)
@@ -215,6 +234,8 @@ namespace stx
 			}
 
 			// Pointers should be restored to their positions
+			m_info--;
+			m_order--;
 			delete[] m_init;
 			delete[] m_info;
 			delete[] m_order;
@@ -326,6 +347,53 @@ namespace stx
 			}
 
 			[[unlikely]] return nullptr;
+		}
+
+		class iterator
+		{
+			const typeinfo** m_info;
+			void** m_ptr;
+
+		public:
+			iterator(const typeinfo** _info, void** _ptr)
+				: m_info(_info)
+				, m_ptr(_ptr)
+			{
+			}
+
+			std::pair<const typeinfo&, void*> operator*() const
+			{
+				return {*m_info[-1], m_ptr[-1]};
+			}
+
+			iterator& operator++()
+			{
+				m_info--;
+				m_ptr--;
+
+				if (!m_info[-1])
+				{
+					m_info = nullptr;
+					m_ptr = nullptr;
+				}
+
+				return *this;
+			}
+
+			bool operator!=(const iterator& rhs) const
+			{
+				return m_info != rhs.m_info || m_ptr != rhs.m_ptr;
+			}
+		};
+
+		iterator begin() noexcept
+		{
+			return iterator{m_info, m_order};
+		}
+
+		iterator end() noexcept
+		{
+			return iterator{nullptr, nullptr};
 		}
 	};
 }

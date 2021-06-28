@@ -180,6 +180,8 @@ namespace stx
 		using under = decltype(int_or_enum());
 
 	public:
+		using enable_bitcopy = std::true_type;
+
 		se_t() noexcept = default;
 
 		constexpr se_t(type value) noexcept

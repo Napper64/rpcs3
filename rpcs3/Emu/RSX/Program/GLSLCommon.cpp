@@ -341,9 +341,10 @@ namespace glsl
 		"		ret.xy = unpackHalf2x16(tmp.x);\n"
 		"		ret.zw = unpackHalf2x16(tmp.y);\n"
 		"	}\n"
-		"	else if (desc.type == VTX_FMT_UINT8 || desc.type == VTX_FMT_UNORM8)\n"
+		"	else if (elem_size == 1) //(desc.type == VTX_FMT_UINT8 || desc.type == VTX_FMT_UNORM8)\n"
 		"	{\n"
-		"		ret = vec4(desc.swap_bytes? result.wzyx : result);\n"
+		"		// Ignore bswap on single byte channels\n"
+		"		ret = vec4(result);\n"
 		"	}\n"
 		"	else //if (desc.type == VTX_FMT_COMP32)\n"
 		"	{\n"
@@ -673,7 +674,7 @@ namespace glsl
 			"}\n\n";
 		}
 
-		if (!props.fp32_outputs)
+		if (!props.fp32_outputs || props.require_linear_to_srgb)
 		{
 			OS <<
 			"vec4 linear_to_srgb(const in vec4 cl)\n"
@@ -682,6 +683,17 @@ namespace glsl
 			"	vec4 high = 1.055 * pow(cl, vec4(1. / 2.4)) - 0.055;\n"
 			"	bvec4 select = lessThan(cl, vec4(0.0031308));\n"
 			"	return clamp(mix(high, low, select), 0., 1.);\n"
+			"}\n\n";
+		}
+
+		if (props.require_texture_ops || props.require_srgb_to_linear)
+		{
+			OS <<
+			"vec4 srgb_to_linear(const in vec4 cs)\n"
+			"{\n"
+			"	vec4 a = cs / 12.92;\n"
+			"	vec4 b = pow((cs + 0.055) / 1.055, vec4(2.4));\n"
+			"	return _select(a, b, greaterThan(cs, vec4(0.04045)));\n"
 			"}\n\n";
 		}
 
@@ -763,12 +775,6 @@ namespace glsl
 			"	return mix(direct, indexed, choice);\n"
 			"}\n\n"
 #endif
-			"vec4 srgb_to_linear(const in vec4 cs)\n"
-			"{\n"
-			"	vec4 a = cs / 12.92;\n"
-			"	vec4 b = pow((cs + 0.055) / 1.055, vec4(2.4));\n"
-			"	return _select(a, b, greaterThan(cs, vec4(0.04045)));\n"
-			"}\n\n"
 
 			//TODO: Move all the texture read control operations here
 			"vec4 process_texel(in vec4 rgba, const in uint control_bits)\n"

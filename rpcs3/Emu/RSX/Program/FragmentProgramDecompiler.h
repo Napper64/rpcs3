@@ -285,6 +285,8 @@ public:
 		bool has_clamp = false;
 		bool has_w_access = false;
 		bool has_exp_tex_op = false;
+		bool has_pkg = false;
+		bool has_upg = false;
 	}
 	properties;
 
@@ -292,6 +294,7 @@ public:
 	{
 		bool has_native_half_support = false;
 		bool emulate_depth_compare = false;
+		bool has_low_precision_rounding = false;
 	}
 	device_props;
 

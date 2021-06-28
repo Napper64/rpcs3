@@ -9,6 +9,7 @@
 #include <array>
 #include <tuple>
 #include <compare>
+#include <memory>
 #include <bit>
 
 using std::chrono::steady_clock;
@@ -520,6 +521,9 @@ template <typename T>
 concept FPInt = std::is_floating_point_v<std::common_type_t<T>> || std::is_same_v<std::common_type_t<T>, f16>;
 
 template <typename T>
+concept Integral = std::is_integral_v<std::common_type_t<T>> || std::is_same_v<std::common_type_t<T>, u128> || std::is_same_v<std::common_type_t<T>, s128>;
+
+template <typename T>
 constexpr T min_v;
 
 template <UnsignedInt T>
@@ -760,7 +764,7 @@ constexpr unsigned __builtin_COLUMN()
 }
 #endif
 
-template <usz Size = usz(-1)>
+template <usz Size = umax>
 struct const_str_t
 {
 	static constexpr usz size = Size;
@@ -791,7 +795,7 @@ struct const_str_t
 };
 
 template <>
-struct const_str_t<usz(-1)>
+struct const_str_t<umax>
 {
 	const usz size;
 
@@ -800,6 +804,12 @@ struct const_str_t<usz(-1)>
 		const char8_t* chars;
 		const char* chars2;
 	};
+
+	const_str_t()
+		: size(0)
+		, chars(nullptr)
+	{
+	}
 
 	template <usz N>
 	constexpr const_str_t(const char8_t(&a)[N])
@@ -844,12 +854,11 @@ struct src_loc
 
 namespace fmt
 {
-	[[noreturn]] void raw_verify_error(const src_loc& loc);
-	[[noreturn]] void raw_narrow_error(const src_loc& loc);
+	[[noreturn]] void raw_verify_error(const src_loc& loc, const char8_t* msg);
 }
 
 template <typename T>
-constexpr decltype(auto) ensure(T&& arg,
+constexpr decltype(auto) ensure(T&& arg, const_str msg = const_str(),
 	u32 line = __builtin_LINE(),
 	u32 col = __builtin_COLUMN(),
 	const char* file = __builtin_FILE(),
@@ -860,7 +869,7 @@ constexpr decltype(auto) ensure(T&& arg,
 		return std::forward<T>(arg);
 	}
 
-	fmt::raw_verify_error({line, col, file, func});
+	fmt::raw_verify_error({line, col, file, func}, msg);
 }
 
 // narrow() function details
@@ -945,8 +954,7 @@ template <typename To = void, typename From, typename = decltype(static_cast<To>
 	// Narrow check
 	if (narrow_impl<From, To>::test(value)) [[unlikely]]
 	{
-		// Pack value as formatting argument
-		fmt::raw_narrow_error({line, col, file, func});
+		fmt::raw_verify_error({line, col, file, func}, u8"Narrowing error");
 	}
 
 	return static_cast<To>(value);
@@ -1010,3 +1018,70 @@ constexpr auto fill_array(const T&... args)
 {
 	return fill_array_t<T...>{{args...}};
 }
+
+template <typename X, typename Y>
+concept PtrCastable = requires(const volatile X* x, const volatile Y* y)
+{
+	static_cast<const volatile Y*>(x);
+	static_cast<const volatile X*>(y);
+};
+
+template <typename X, typename Y> requires PtrCastable<X, Y>
+constexpr bool is_same_ptr()
+{
+	if constexpr (std::is_void_v<X> || std::is_void_v<Y> || std::is_same_v<std::remove_cv_t<X>, std::remove_cv_t<Y>>)
+	{
+		return true;
+	}
+	else if constexpr (sizeof(X) == sizeof(Y))
+	{
+		return true;
+	}
+	else
+	{
+		if (std::is_constant_evaluated())
+		{
+			bool result = false;
+
+			if constexpr (sizeof(X) < sizeof(Y))
+			{
+				std::allocator<Y> a{};
+				Y* ptr = a.allocate(1);
+				result = static_cast<X*>(ptr) == static_cast<void*>(ptr);
+				a.deallocate(ptr, 1);
+			}
+			else
+			{
+				std::allocator<X> a{};
+				X* ptr = a.allocate(1);
+				result = static_cast<Y*>(ptr) == static_cast<void*>(ptr);
+				a.deallocate(ptr, 1);
+			}
+
+			return result;
+		}
+		else
+		{
+			std::aligned_union_t<0, X, Y> s;
+			Y* ptr = reinterpret_cast<Y*>(&s);
+			return static_cast<X*>(ptr) == static_cast<void*>(ptr);
+		}
+	}
+}
+
+template <typename X, typename Y> requires PtrCastable<X, Y>
+constexpr bool is_same_ptr(const volatile Y* ptr)
+{
+	return static_cast<const volatile X*>(ptr) == static_cast<const volatile void*>(ptr);
+}
+
+template <typename X, typename Y>
+concept PtrSame = (is_same_ptr<X, Y>());
+
+namespace utils
+{
+	struct serial;
+}
+
+template <typename T>
+extern bool serialize(utils::serial& ar, T& obj);

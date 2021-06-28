@@ -4,6 +4,7 @@
 #include "table_item_delegate.h"
 #include "Emu/RSX/RSXThread.h"
 #include "Emu/RSX/gcm_printing.h"
+#include "util/asm.hpp"
 
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -13,6 +14,8 @@
 #include <QPushButton>
 #include <QKeyEvent>
 
+#include <span>
+
 enum GCMEnumTypes
 {
 	CELL_GCM_ENUM,
@@ -21,12 +24,12 @@ enum GCMEnumTypes
 
 constexpr auto qstr = QString::fromStdString;
 
-namespace
+namespace utils
 {
-	template <typename T>
-	gsl::span<T> as_const_span(gsl::span<const std::byte> unformated_span)
+	template <typename T, typename U>
+	[[nodiscard]] auto bless(const std::span<U>& span)
 	{
-		return{ reinterpret_cast<T*>(unformated_span.data()), unformated_span.size_bytes() / sizeof(T) };
+		return std::span<T>(bless<T>(span.data()), sizeof(U) * span.size() / sizeof(T));
 	}
 }
 
@@ -271,7 +274,7 @@ void rsx_debugger::closeEvent(QCloseEvent* event)
 
 void rsx_debugger::keyPressEvent(QKeyEvent* event)
 {
-	if (isActiveWindow())
+	if (isActiveWindow() && !event->isAutoRepeat())
 	{
 		switch (event->key())
 		{
@@ -412,18 +415,18 @@ namespace
 		return std::bit_cast<f32>(raw);
 	}
 
-	std::array<u8, 3> get_value(gsl::span<const std::byte> orig_buffer, rsx::surface_color_format format, usz idx)
+	std::array<u8, 3> get_value(std::span<const std::byte> orig_buffer, rsx::surface_color_format format, usz idx)
 	{
 		switch (format)
 		{
 		case rsx::surface_color_format::b8:
 		{
-			const u8 value = as_const_span<const u8>(orig_buffer)[idx];
+			const u8 value = utils::bless<const u8>(orig_buffer)[idx];
 			return{ value, value, value };
 		}
 		case rsx::surface_color_format::x32:
 		{
-			const be_t<u32> stored_val = as_const_span<const be_t<u32>>(orig_buffer)[idx];
+			const be_t<u32> stored_val = utils::bless<const be_t<u32>>(orig_buffer)[idx];
 			const u32 swapped_val = stored_val;
 			const f32 float_val = std::bit_cast<f32>(swapped_val);
 			const u8 val = float_val * 255.f;
@@ -433,19 +436,19 @@ namespace
 		case rsx::surface_color_format::x8b8g8r8_o8b8g8r8:
 		case rsx::surface_color_format::x8b8g8r8_z8b8g8r8:
 		{
-			const auto ptr = as_const_span<const u8>(orig_buffer);
+			const auto ptr = utils::bless<const u8>(orig_buffer);
 			return{ ptr[1 + idx * 4], ptr[2 + idx * 4], ptr[3 + idx * 4] };
 		}
 		case rsx::surface_color_format::a8r8g8b8:
 		case rsx::surface_color_format::x8r8g8b8_o8r8g8b8:
 		case rsx::surface_color_format::x8r8g8b8_z8r8g8b8:
 		{
-			const auto ptr = as_const_span<const u8>(orig_buffer);
+			const auto ptr = utils::bless<const u8>(orig_buffer);
 			return{ ptr[3 + idx * 4], ptr[2 + idx * 4], ptr[1 + idx * 4] };
 		}
 		case rsx::surface_color_format::w16z16y16x16:
 		{
-			const auto ptr = as_const_span<const u16>(orig_buffer);
+			const auto ptr = utils::bless<const u16>(orig_buffer);
 			const f16 h0 = static_cast<f16>(ptr[4 * idx]);
 			const f16 h1 = static_cast<f16>(ptr[4 * idx + 1]);
 			const f16 h2 = static_cast<f16>(ptr[4 * idx + 2]);
@@ -471,7 +474,7 @@ namespace
 	/**
 	 * Return a new buffer that can be passed to QImage.
 	 */
-	u8* convert_to_QImage_buffer(rsx::surface_color_format format, gsl::span<const std::byte> orig_buffer, usz width, usz height) noexcept
+	u8* convert_to_QImage_buffer(rsx::surface_color_format format, std::span<const std::byte> orig_buffer, usz width, usz height) noexcept
 	{
 		u8* buffer = static_cast<u8*>(std::malloc(width * height * 4));
 		if (!buffer || width == 0 || height == 0)
@@ -521,7 +524,7 @@ void rsx_debugger::OnClickDrawCalls()
 	{
 		if (width && height && !draw_call.depth_stencil[0].empty())
 		{
-			const gsl::span<const std::byte> orig_buffer = draw_call.depth_stencil[0];
+			const std::span<const std::byte> orig_buffer = draw_call.depth_stencil[0];
 			u8* buffer = static_cast<u8*>(std::malloc(4ULL * width * height));
 
 			if (draw_call.state.surface_depth_fmt() == rsx::surface_depth_format::z24s8)
@@ -530,7 +533,7 @@ void rsx_debugger::OnClickDrawCalls()
 				{
 					for (u32 col = 0; col < width; col++)
 					{
-						const u32 depth_val = as_const_span<const u32>(orig_buffer)[row * width + col];
+						const u32 depth_val = utils::bless<const u32>(orig_buffer)[row * width + col];
 						const u8 displayed_depth_val = 255 * depth_val / 0xFFFFFF;
 						buffer[4 * col + 0 + width * row * 4] = displayed_depth_val;
 						buffer[4 * col + 1 + width * row * 4] = displayed_depth_val;
@@ -545,7 +548,7 @@ void rsx_debugger::OnClickDrawCalls()
 				{
 					for (u32 col = 0; col < width; col++)
 					{
-						const u16 depth_val = as_const_span<const u16>(orig_buffer)[row * width + col];
+						const u16 depth_val = utils::bless<const u16>(orig_buffer)[row * width + col];
 						const u8 displayed_depth_val = 255 * depth_val / 0xFFFF;
 						buffer[4 * col + 0 + width * row * 4] = displayed_depth_val;
 						buffer[4 * col + 1 + width * row * 4] = displayed_depth_val;
@@ -562,14 +565,14 @@ void rsx_debugger::OnClickDrawCalls()
 	{
 		if (width && height && !draw_call.depth_stencil[1].empty())
 		{
-			const gsl::span<const std::byte> orig_buffer = draw_call.depth_stencil[1];
+			const std::span<const std::byte> orig_buffer = draw_call.depth_stencil[1];
 			u8* buffer = static_cast<u8*>(std::malloc(4ULL * width * height));
 
 			for (u32 row = 0; row < height; row++)
 			{
 				for (u32 col = 0; col < width; col++)
 				{
-					const u8 stencil_val = as_const_span<const u8>(orig_buffer)[row * width + col];
+					const u8 stencil_val = utils::bless<const u8>(orig_buffer)[row * width + col];
 					buffer[4 * col + 0 + width * row * 4] = stencil_val;
 					buffer[4 * col + 1 + width * row * 4] = stencil_val;
 					buffer[4 * col + 2 + width * row * 4] = stencil_val;

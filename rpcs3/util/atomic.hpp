@@ -1112,6 +1112,7 @@ protected:
 
 public:
 	static constexpr usz align = Align;
+	using enable_bitcopy = std::true_type;
 
 	atomic_t() noexcept = default;
 
