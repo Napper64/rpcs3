@@ -115,8 +115,8 @@ namespace utils
 		}
 
 		// Abort if there is no natching stream or if the stream isn't the first one
-		if (av_media_type == AVMEDIA_TYPE_AUDIO && audio_stream_index != 0 ||
-			av_media_type == AVMEDIA_TYPE_VIDEO && video_stream_index != 0)
+		if ((av_media_type == AVMEDIA_TYPE_AUDIO && audio_stream_index != 0) ||
+			(av_media_type == AVMEDIA_TYPE_VIDEO && video_stream_index != 0))
 		{
 			// Failed to find a stream
 			avformat_close_input(&av_format_ctx);
@@ -145,7 +145,7 @@ namespace utils
 		info.duration_us = av_format_ctx->duration;
 
 		AVDictionaryEntry* tag = nullptr;
-		while (tag = av_dict_get(av_format_ctx->metadata, "", tag, AV_DICT_IGNORE_SUFFIX))
+		while ((tag = av_dict_get(av_format_ctx->metadata, "", tag, AV_DICT_IGNORE_SUFFIX)))
 		{
 			info.metadata[tag->key] = tag->value;
 		}

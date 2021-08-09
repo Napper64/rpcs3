@@ -187,7 +187,7 @@ public:
 		g_to_awake.clear();
 	}
 
-	static ppu_thread_status ppu_state(ppu_thread* ppu, bool lock_idm = true);
+	static ppu_thread_status ppu_state(ppu_thread* ppu, bool lock_idm = true, bool lock_lv2 = true);
 
 	static inline void append(cpu_thread* const thread)
 	{
@@ -199,7 +199,7 @@ public:
 	template <typename T>
 	static inline u64 get_key(const T& attr)
 	{
-		return (attr.pshared != SYS_SYNC_PROCESS_SHARED ? +attr.ipc_key : 0);
+		return (attr.pshared == SYS_SYNC_PROCESS_SHARED ? +attr.ipc_key : 0);
 	}
 
 	template <typename T, typename F>
@@ -406,10 +406,10 @@ public:
 		return true;
 	}
 
-private:
 	// Scheduler mutex
 	static shared_mutex g_mutex;
 
+private:
 	// Pending list of threads to run
 	static thread_local std::vector<class cpu_thread*> g_to_awake;
 

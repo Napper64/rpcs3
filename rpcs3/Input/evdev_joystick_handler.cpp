@@ -81,6 +81,8 @@ void evdev_joystick_handler::init_config(pad_config* cfg, const std::string& nam
 	cfg->l2.def       = axis_list.at(ABS_Z);
 	cfg->l3.def       = button_list.at(BTN_THUMBL);
 
+	cfg->pressure_intensity_button.def = button_list.at(NO_BUTTON);
+
 	// Set default misc variables
 	cfg->lstickdeadzone.def    = 30; // between 0 and 255
 	cfg->rstickdeadzone.def    = 30; // between 0 and 255
@@ -223,7 +225,11 @@ std::unordered_map<u64, std::pair<u16, bool>> evdev_joystick_handler::GetButtonV
 	for (const auto& entry : button_list)
 	{
 		const auto code = entry.first;
-		int val         = 0;
+
+		if (code == NO_BUTTON)
+			continue;
+
+		int val = 0;
 
 		if (libevdev_fetch_event_value(dev, EV_KEY, code, &val) == 0)
 			continue;
@@ -338,6 +344,8 @@ void evdev_joystick_handler::get_next_button_press(const std::string& padId, con
 	for (const auto& [code, name] : button_list)
 	{
 		// Handle annoying useless buttons
+		if (code == NO_BUTTON)
+			continue;
 		if (padId.find("Xbox 360") != umax && code >= BTN_TRIGGER_HAPPY)
 			continue;
 		if (padId.find("Sony") != umax && (code == BTN_TL2 || code == BTN_TR2))
@@ -520,9 +528,9 @@ void evdev_joystick_handler::SetPadData(const std::string& padId, u32 largeMotor
 	SetRumble(static_cast<EvdevDevice*>(dev.get()), largeMotor, smallMotor);
 }
 
-int evdev_joystick_handler::GetButtonInfo(const input_event& evt, const std::shared_ptr<EvdevDevice>& device, int& value)
+u32 evdev_joystick_handler::GetButtonInfo(const input_event& evt, const std::shared_ptr<EvdevDevice>& device, int& value)
 {
-	const int code         = evt.code;
+	const u32 code         = evt.code;
 	const int val          = evt.value;
 	m_is_button_or_trigger = false;
 
@@ -742,8 +750,8 @@ void evdev_joystick_handler::get_mapping(const std::shared_ptr<PadDevice>& devic
 	m_dev->cur_type = evt.type;
 
 	int value;
-	const int button_code = GetButtonInfo(evt, m_dev, value);
-	if (button_code < 0 || value < 0)
+	const u32 button_code = GetButtonInfo(evt, m_dev, value);
+	if (button_code == NO_BUTTON || value < 0)
 		return;
 
 	auto axis_orientations = m_dev->axis_orientations;
@@ -751,7 +759,9 @@ void evdev_joystick_handler::get_mapping(const std::shared_ptr<PadDevice>& devic
 	// Translate any corresponding keycodes to our normal DS3 buttons and triggers
 	for (int i = 0; i < static_cast<int>(pad->m_buttons.size()); i++)
 	{
-		if (pad->m_buttons[i].m_keyCode != button_code + 0u)
+		auto& button = pad->m_buttons[i];
+
+		if (button.m_keyCode != button_code)
 			continue;
 
 		// Be careful to handle mapped axis specially
@@ -769,14 +779,14 @@ void evdev_joystick_handler::get_mapping(const std::shared_ptr<PadDevice>& devic
 			}
 			else if (direction != (m_is_negative ? 1 : 0))
 			{
-				pad->m_buttons[i].m_value   = 0;
-				pad->m_buttons[i].m_pressed = 0;
+				button.m_value   = 0;
+				button.m_pressed = 0;
 				continue;
 			}
 		}
 
-		pad->m_buttons[i].m_value = static_cast<u16>(value);
-		TranslateButtonPress(m_dev, button_code, pad->m_buttons[i].m_pressed, pad->m_buttons[i].m_value);
+		button.m_value = static_cast<u16>(value);
+		TranslateButtonPress(m_dev, button_code, button.m_pressed, button.m_value);
 	}
 
 	// Translate any corresponding keycodes to our two sticks. (ignoring thresholds for now)
@@ -786,7 +796,7 @@ void evdev_joystick_handler::get_mapping(const std::shared_ptr<PadDevice>& devic
 		bool pressed_max = false;
 
 		// m_keyCodeMin is the mapped key for left or down
-		if (pad->m_sticks[idx].m_keyCodeMin == button_code + 0u)
+		if (pad->m_sticks[idx].m_keyCodeMin == button_code)
 		{
 			bool is_direction_min = false;
 
@@ -812,7 +822,7 @@ void evdev_joystick_handler::get_mapping(const std::shared_ptr<PadDevice>& devic
 		}
 
 		// m_keyCodeMax is the mapped key for right or up
-		if (pad->m_sticks[idx].m_keyCodeMax == button_code + 0u)
+		if (pad->m_sticks[idx].m_keyCodeMax == button_code)
 		{
 			bool is_direction_max = false;
 
@@ -951,8 +961,12 @@ bool evdev_joystick_handler::bindPadToDevice(std::shared_ptr<Pad> pad, const std
 		p_profile->device_class_type,
 		pclass_profile,
 		p_profile->vendor_id,
-		p_profile->product_id
+		p_profile->product_id,
+		p_profile->pressure_intensity
 	);
+
+	pad->m_buttons.emplace_back(special_button_offset, evdevbutton(p_profile->pressure_intensity_button).code, special_button_value::pressure_intensity);
+	pad->m_pressure_intensity_button_index = pad->m_buttons.size() - 1;
 
 	pad->m_buttons.emplace_back(CELL_PAD_BTN_OFFSET_DIGITAL2, evdevbutton(p_profile->triangle).code, CELL_PAD_CTRL_TRIANGLE);
 	pad->m_buttons.emplace_back(CELL_PAD_BTN_OFFSET_DIGITAL2, evdevbutton(p_profile->circle).code,   CELL_PAD_CTRL_CIRCLE);
