@@ -7892,60 +7892,60 @@ public:
 	value_t<f32[4]> fma32x4(value_t<f32[4]> a, value_t<f32[4]> b, value_t<f32[4]> c)
 	{
 		value_t<f32[4]> r;
-		const auto ma = eval(sext<s32[4]>(fcmp_uno(a != fsplat<f32[4]>(0.))));
-		const auto mb = eval(sext<s32[4]>(fcmp_uno(b != fsplat<f32[4]>(0.))));
-		const auto ca = eval(bitcast<f32[4]>(bitcast<s32[4]>(a) & mb));
-		const auto cb = eval(bitcast<f32[4]>(bitcast<s32[4]>(b) & ma));
 
 		// Optimization: Emit only a floating multiply if the addend is zero
 		// This is odd since SPU code could just use the FM instruction, but it seems common enough
-		if (auto cv = llvm::dyn_cast<llvm::Constant>(c.value))
+		if (auto [ok, data] = get_const_vector(c.value, m_pos, 4000); ok)
 		{
-			auto [ok, data] = get_const_vector(cv, m_pos, 4000);
-
-			if (is_spu_float_zero(data))
+			if (is_spu_float_zero(data, -1))
 			{
-				r = eval(ca * cb);
+				r = eval(a * b);
+				return r;
+			}
+
+			if (!m_use_fma && is_spu_float_zero(data, +1))
+			{
+				r = eval(a * b + fsplat<f32[4]>(0.f));
 				return r;
 			}
 		}
 
 		if ([&]()
+		{
+			if (auto [ok, data] = get_const_vector(a.value, m_pos, 4000); ok)
 			{
-			    if (auto [ok, data] = get_const_vector(ca.value, m_pos, 4000); ok)
-			    {
-				    if (!is_spu_float_zero(data, +1))
-				    {
-					    return false;
-				    }
+				if (!is_spu_float_zero(data, +1))
+				{
+					return false;
+				}
 
-				    if (auto [ok0, data0] = get_const_vector(cb.value, m_pos, 4000); ok0)
-				    {
-					    if (is_spu_float_zero(data0, +1))
-					    {
-						    return true;
-					    }
-				    }
-			    }
+				if (auto [ok0, data0] = get_const_vector(b.value, m_pos, 4000); ok0)
+				{
+					if (is_spu_float_zero(data0, +1))
+					{
+						return true;
+					}
+				}
+			}
 
-			    if (auto [ok, data] = get_const_vector(ca.value, m_pos, 4000); ok)
-			    {
-				    if (!is_spu_float_zero(data, -1))
-				    {
-					    return false;
-				    }
+			if (auto [ok, data] = get_const_vector(a.value, m_pos, 4000); ok)
+			{
+				if (!is_spu_float_zero(data, -1))
+				{
+					return false;
+				}
 
-				    if (auto [ok0, data0] = get_const_vector(cb.value, m_pos, 4000); ok0)
-				    {
-					    if (is_spu_float_zero(data0, -1))
-					    {
-						    return true;
-					    }
-				    }
-			    }
+				if (auto [ok0, data0] = get_const_vector(b.value, m_pos, 4000); ok0)
+				{
+					if (is_spu_float_zero(data0, -1))
+					{
+						return true;
+					}
+				}
+			}
 
-			    return false;
-		    }())
+			return false;
+		}())
 		{
 			// Just return the added value if both a and b is +0 or -0 (+0 and -0 arent't allowed alone)
 			return c;
@@ -7953,13 +7953,13 @@ public:
 
 		if (m_use_fma)
 		{
-			r.value = m_ir->CreateCall(get_intrinsic<f32[4]>(llvm::Intrinsic::fma), {ca.value, cb.value, c.value});
+			r.value = m_ir->CreateCall(get_intrinsic<f32[4]>(llvm::Intrinsic::fma), {a.value, b.value, c.value});
 			return r;
 		}
 
 		// Convert to doubles
-		const auto xa = m_ir->CreateFPExt(ca.value, get_type<f64[4]>());
-		const auto xb = m_ir->CreateFPExt(cb.value, get_type<f64[4]>());
+		const auto xa = m_ir->CreateFPExt(a.value, get_type<f64[4]>());
+		const auto xb = m_ir->CreateFPExt(b.value, get_type<f64[4]>());
 		const auto xc = m_ir->CreateFPExt(c.value, get_type<f64[4]>());
 		const auto xr = m_ir->CreateCall(get_intrinsic<f64[4]>(llvm::Intrinsic::fmuladd), {xa, xb, xc});
 		r.value = m_ir->CreateFPTrunc(xr, get_type<f32[4]>());
@@ -7972,7 +7972,11 @@ public:
 		if (g_cfg.core.spu_accurate_xfloat || g_cfg.core.spu_fnms_accuracy == spu_instruction_accuracy::accurate)
 			set_vr(op.rt4, fmuladd(eval(-get_vr<f64[4]>(op.ra)), get_vr<f64[4]>(op.rb), get_vr<f64[4]>(op.rc)));
 		else if (g_cfg.core.spu_approx_xfloat || g_cfg.core.spu_fnms_accuracy == spu_instruction_accuracy::approximate)
-			set_vr(op.rt4, fma32x4(eval(-get_vr<f32[4]>(op.ra)), get_vr<f32[4]>(op.rb), get_vr<f32[4]>(op.rc)));
+		{
+			const auto a = eval(clamp_smax(get_vr<f32[4]>(op.ra)));
+			const auto b = eval(clamp_smax(get_vr<f32[4]>(op.rb)));
+			set_vr(op.rt4, fma32x4(eval(-(a)), (b), get_vr<f32[4]>(op.rc)));
+		}
 		else
 			set_vr(op.rt4, fma32x4(eval(-get_vr<f32[4]>(op.ra)), get_vr<f32[4]>(op.rb), get_vr<f32[4]>(op.rc)));
 	}
